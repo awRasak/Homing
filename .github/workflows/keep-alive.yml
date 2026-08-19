@@ -1,0 +1,17 @@
+name: Keep Alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Homing API
+        run: |
+          curl -fsS -o /dev/null \
+            -w "ping %{http_code} in %{time_total}s\n" \
+            "https://homing-api.onrender.com/api/status" \
+            || echo "Ping failed"
