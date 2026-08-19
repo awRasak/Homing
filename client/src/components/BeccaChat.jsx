@@ -10,7 +10,7 @@ function todaySessionId(ws) {
   return `${ws}:${d}`;
 }
 
-export default function BeccaChat({ topics, profile, memory, workspace, activeSession, onSelectSession, model }) {
+export default function BeccaChat({ topics, profile, memory, workspace, activeSession, onSelectSession, model, onModelChange }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -154,6 +154,16 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
           <input ref={inputRef} type="text" className="input-main" value={input}
             onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Ask me anything, or say 'track [topic]', 'briefing'…" disabled={busy} />
+          {onModelChange && (
+            <select className="input-model-select" value={model}
+              onChange={e => onModelChange(e.target.value)} title="Model">
+              <option value="gpt-oss-20b">gpt-oss-20b</option>
+              <option value="gpt-oss-120b">gpt-oss-120b</option>
+              <option value="compound-mini">compound-mini</option>
+              <option value="compound">compound</option>
+              <option value="qwen-3.6-27b">qwen-3.6-27b</option>
+            </select>
+          )}
           <button className="input-send" onClick={handleSend} disabled={busy || !input.trim()}>↑</button>
         </div>
       </div>

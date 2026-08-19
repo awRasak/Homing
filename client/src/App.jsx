@@ -69,9 +69,6 @@ export default function App() {
   const [beccaSettings, setBeccaSettings] = useState({ dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00' });
   const [beccaSettingsOpen, setBeccaSettingsOpen] = useState(false);
   const [beccaModel, setBeccaModel] = useState(() => localStorage.getItem('homin:model') || 'gpt-oss-20b');
-  const [bellShake, setBellShake] = useState(false);
-  const [bellCount, setBellCount] = useState(0);
-  const prevReminderCount = useRef(0);
 
   const bootstrapped = useRef(false);
   const saveTimers = useRef({});
@@ -427,22 +424,6 @@ export default function App() {
     setBeccaReminders(prev => [{ id: result.id, text: data.text, due: data.due || null, when_raw: data.when_raw || '', fired: 0, dismissed: 0, created_at: now }, ...prev]);
   }
 
-  function handleBellClick() {
-    setBellCount(0);
-    setBellShake(false);
-    setSection('becca');
-    setBeccaSection('reminders');
-  }
-
-  useEffect(() => {
-    if (beccaReminders.length > prevReminderCount.current) {
-      setBellShake(true);
-      setBellCount(prev => prev + 1);
-      setTimeout(() => setBellShake(false), 600);
-    }
-    prevReminderCount.current = beccaReminders.length;
-  }, [beccaReminders.length]);
-
   if (loading) {
     return <div className="app-loading">Loading…</div>;
   }
@@ -454,6 +435,7 @@ export default function App() {
       <NavRail section={section} onNavigate={setSection} theme={theme} onToggleTheme={toggleTheme} />
 
       <div className="main-area">
+        {section !== 'becca' && (
         <header className="topbar no-print">
           <div className={`topbar-l ${section === 'becca' ? 'clickable' : ''}`}
             onClick={section === 'becca' ? () => setBeccaSection('chat') : undefined}>
@@ -482,23 +464,8 @@ export default function App() {
               </button>
             </div>
           )}
-          {section === 'becca' && (
-            <div className="topbar-r">
-              <select className="al-model-select" value={beccaModel}
-                onChange={e => { setBeccaModel(e.target.value); localStorage.setItem('homin:model', e.target.value); }}>
-                <option value="gpt-oss-20b">gpt-oss-20b</option>
-                <option value="gpt-oss-120b">gpt-oss-120b</option>
-                <option value="compound-mini">compound-mini</option>
-                <option value="compound">compound</option>
-                <option value="qwen-3.6-27b">qwen-3.6-27b</option>
-              </select>
-              <button className={`bell-btn ${bellShake ? 'shake' : ''}`} onClick={handleBellClick} title="Reminders">
-                🔔
-                {bellCount > 0 && <span className="bell-badge">{bellCount}</span>}
-              </button>
-            </div>
-          )}
         </header>
+        )}
 
         {section === 'becca' ? (
           <div className="section-body becca-section">
@@ -509,7 +476,7 @@ export default function App() {
               onUpdateTopic={handleBeccaUpdateTopic} onSaveSettings={handleBeccaSaveSettings}
               onAddReminder={handleBeccaAddReminder} onDismissReminder={handleBeccaDismissReminder}
               workspace={BECCA_WORKSPACE} beccaSection={beccaSection} onSectionChange={setBeccaSection}
-              beccaModel={beccaModel} />
+              beccaModel={beccaModel} onModelChange={(m) => { setBeccaModel(m); localStorage.setItem('homin:model', m); }} />
             {beccaSettingsOpen && (
               <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
                 onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}
