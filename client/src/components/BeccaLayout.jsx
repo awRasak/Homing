@@ -312,6 +312,57 @@ function PanelPipeline({ topics, workspace }) {
   );
 }
 
+/* ── Panel: Reminders ── */
+function PanelReminders({ reminders, onAddReminder, onDismissReminder }) {
+  const [text, setText] = useState('');
+  const [due, setDue] = useState('');
+  const now = Date.now();
+
+  async function handleAdd() {
+    if (!text.trim()) return;
+    await onAddReminder({ text: text.trim(), due: due ? new Date(due).toISOString() : null, when_raw: due });
+    setText('');
+    setDue('');
+  }
+
+  return (
+    <div className="reminders-panel">
+      <div className="bp-section">
+        <div className="cp-label">New Reminder</div>
+        <input className="cp-input" type="text" placeholder="What to remind you about?" value={text}
+          onChange={e => setText(e.target.value)} />
+        <input className="cp-input" type="datetime-local" value={due}
+          onChange={e => setDue(e.target.value)} style={{ marginTop: 8 }} />
+        <button className="btn-add-topic" onClick={handleAdd} disabled={!text.trim()}>+ Add reminder</button>
+      </div>
+
+      <div className="bp-section rp-list-section">
+        <div className="cp-label">Reminders ({reminders.length})</div>
+        {!reminders || reminders.length === 0 ? (
+          <div className="cp-empty">No reminders yet — ask Homin to set one, or add above</div>
+        ) : (
+          <div className="rp-list">
+            {reminders.map(r => {
+              const dueAt = r.due ? new Date(r.due) : null;
+              const overdue = dueAt && dueAt.getTime() < now;
+              return (
+                <div key={r.id} className={`rp-card ${overdue ? 'overdue' : ''}`}>
+                  <div className="rp-card-text">{r.text}</div>
+                  <div className="rp-card-foot">
+                    {dueAt && <span className="rp-due">{dueAt.toLocaleString()}</span>}
+                    {r.when_raw && !dueAt && <span className="rp-due">{r.when_raw}</span>}
+                    <button className="rp-dismiss" onClick={() => onDismissReminder(r.id)}>Dismiss</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════
    LAYOUT
    ═══════════════════════════════════════════ */
@@ -321,6 +372,7 @@ const TABS = [
   { key: 'watchlist', icon: '📡', label: 'Watchlist' },
   { key: 'briefings', icon: '🗂', label: 'Briefings' },
   { key: 'pipeline', icon: '🛠', label: 'Pipeline' },
+  { key: 'reminders', icon: '🔔', label: 'Reminders' },
 ];
 
 export default function BeccaLayout({
@@ -389,6 +441,9 @@ export default function BeccaLayout({
           )}
           {activeTab === 'pipeline' && (
             <PanelPipeline topics={topics} workspace={workspace} />
+          )}
+          {activeTab === 'reminders' && (
+            <PanelReminders reminders={reminders} onAddReminder={onAddReminder} onDismissReminder={onDismissReminder} />
           )}
         </div>
         <div className="al-resizer" onMouseDown={startResize} title="Drag to resize" />

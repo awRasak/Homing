@@ -18,7 +18,6 @@ import BatchGeneratePanel from './components/BatchGeneratePanel';
 import HistoryList from './components/HistoryList';
 import BeccaLayout from './components/BeccaLayout';
 import BeccaSettings from './components/BeccaSettings';
-import ContentPipeline from './components/ContentPipeline';
 import './App.css';
 
 const DEFAULT_FONT = 'Inter';
@@ -418,8 +417,14 @@ export default function App() {
   }
 
   async function handleBeccaDismissReminder(id) {
-    await api.becca.dismissReminder(id);
+    await api.becca.deleteReminder(id);
     setBeccaReminders(prev => prev.filter(r => r.id !== id));
+  }
+
+  async function handleBeccaAddReminder(data) {
+    const result = await api.becca.addReminder({ ...data, workspace: BECCA_WORKSPACE });
+    const now = new Date().toISOString();
+    setBeccaReminders(prev => [{ id: result.id, text: data.text, due: data.due || null, when_raw: data.when_raw || '', fired: 0, dismissed: 0, created_at: now }, ...prev]);
   }
 
   function handleBellClick() {
@@ -502,7 +507,7 @@ export default function App() {
               briefings={beccaBriefings} reminders={beccaReminders} settings={beccaSettings}
               onAddTopic={handleBeccaAddTopic} onRemoveTopic={handleBeccaRemoveTopic}
               onUpdateTopic={handleBeccaUpdateTopic} onSaveSettings={handleBeccaSaveSettings}
-              onAddReminder={() => {}} onDismissReminder={handleBeccaDismissReminder}
+              onAddReminder={handleBeccaAddReminder} onDismissReminder={handleBeccaDismissReminder}
               workspace={BECCA_WORKSPACE} beccaSection={beccaSection} onSectionChange={setBeccaSection}
               beccaModel={beccaModel} />
             {beccaSettingsOpen && (
