@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import BeccaChat from './BeccaChat';
+import CalendarPicker from './CalendarPicker';
 import { renderMarkdown } from './PostPreviewPage';
 import { RunPipelineModal, PostCard, EditPostModal } from './ContentPipeline';
 
@@ -335,8 +336,7 @@ function PanelReminders({ reminders, onAddReminder, onDismissReminder }) {
         <div className="cp-label">New Reminder</div>
         <input className="cp-input" type="text" placeholder="What to remind you about?" value={text}
           onChange={e => setText(e.target.value)} />
-        <input className="cp-input" type="datetime-local" value={due}
-          onChange={e => setDue(e.target.value)} style={{ marginTop: 8 }} />
+        <CalendarPicker value={due} onChange={setDue} />
         <button className="btn-add-topic" onClick={handleAdd} disabled={!text.trim()}>+ Add reminder</button>
       </div>
 
