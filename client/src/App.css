@@ -2068,14 +2068,14 @@ select:focus {
 }
 
 .w-hi {
-  font-size: 1.06rem;
+  font-size: 1.14rem;
   font-weight: 400;
   color: var(--grey-mid);
   margin-bottom: 3px;
 }
 
 .w-main {
-  font-size: 1.9rem;
+  font-size: 2.05rem;
   font-weight: 700;
   color: var(--ink);
   letter-spacing: -0.03em;
@@ -2087,7 +2087,7 @@ select:focus {
 }
 
 .w-sub {
-  font-size: 0.95rem;
+  font-size: 1.03rem;
   font-weight: 300;
   color: var(--grey-mid);
   margin-top: 8px;
@@ -2096,7 +2096,7 @@ select:focus {
 }
 
 .w-chips-label {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -2120,7 +2120,7 @@ select:focus {
   border: 1.5px solid var(--grey-border);
   border-radius: 100px;
   font-family: inherit;
-  font-size: 0.69rem;
+  font-size: 0.75rem;
   font-weight: 400;
   padding: 7px 16px;
   color: var(--grey-mid);
