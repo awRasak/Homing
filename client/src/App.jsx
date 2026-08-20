@@ -93,6 +93,15 @@ export default function App() {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
     setLoading(false);
+
+    // Keep the backend warm while the tab is open (Render sleeps after ~15 min idle,
+    // and the GitHub cron is unreliable with long delays).
+    const heartbeat = setInterval(() => {
+      fetch(`${import.meta.env.VITE_API_BASE || '/api'}/status`).catch(() => {});
+    }, 5 * 60 * 1000);
+    const reset = () => clearInterval(heartbeat);
+    window.addEventListener('beforeunload', reset);
+
     (async () => {
       try {
         const status = await api.status();
