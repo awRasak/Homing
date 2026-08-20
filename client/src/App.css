@@ -2408,7 +2408,7 @@ input.input-main:focus {
 
 .model-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
+  bottom: calc(100% + 6px);
   right: 0;
   background: var(--surface);
   border: 1.5px solid var(--grey-border);
@@ -2418,7 +2418,7 @@ input.input-main:focus {
   z-index: 200;
   overflow: hidden;
   display: none;
-  animation: fadeUp 0.15s ease;
+  animation: fadeDown 0.15s ease;
 }
 .model-dropdown.open {
   display: block;
@@ -2476,6 +2476,11 @@ input.input-main:focus {
 
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeDown {
+  from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
