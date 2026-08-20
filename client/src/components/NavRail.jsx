@@ -7,7 +7,7 @@ export default function NavRail({ section, onNavigate, onOpenProfile }) {
   return (
     <nav className="nav-rail no-print">
       <div className="nav-logo" onClick={() => onNavigate('proposals')} title="Homing">
-        <img src="/icons/sparkles.png" alt="" className="nav-logo-img" />
+        <img src="/icons/logomark.png" alt="" className="nav-logo-img" />
       </div>
       {NAV_ITEMS.map((item) => (
         <div

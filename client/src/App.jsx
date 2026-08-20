@@ -511,7 +511,7 @@ export default function App() {
         <header className="topbar no-print">
           <div className={`topbar-l ${section === 'becca' ? 'clickable' : ''}`}
             onClick={section === 'becca' ? () => setBeccaSection('chat') : undefined}>
-            <div className="topbar-spark">✦</div>
+            <img src="/icons/logomark.png" alt="" className="topbar-logo-img" />
             <div>
               <div className="topbar-name">{meta.name}</div>
               <div className="topbar-status">{meta.status}</div>
