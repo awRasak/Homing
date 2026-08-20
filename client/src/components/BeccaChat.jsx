@@ -6,6 +6,14 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+const MODEL_OPTIONS = [
+  { value: 'gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'Fast, smart, best for daily use', color: '#7c3aed' },
+  { value: 'gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'Deep analysis & complex questions', color: '#0ea5e9' },
+  { value: 'compound-mini', label: 'Compound Mini', desc: 'Fast, light, low latency', color: 'var(--green-dark)' },
+  { value: 'compound', label: 'Compound', desc: 'Most powerful available', color: '#f59e0b' },
+  { value: 'qwen-3.6-27b', label: 'Qwen 3.6 27B', desc: 'Latest generation, experimental', color: '#ef4444' },
+];
+
 function todaySessionId(ws) {
   const d = new Date();
   const y = d.getFullYear();
@@ -18,14 +26,26 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const feedRef = useRef(null);
   const inputRef = useRef(null);
+  const modelWrapRef = useRef(null);
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
   }, [messages]);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (modelWrapRef.current && !modelWrapRef.current.contains(e.target)) {
+        setModelOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
 
   useEffect(() => {
     if (activeSession) loadSessionMessages(activeSession);
@@ -154,14 +174,29 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
       <div className="becca-input-bar">
         <div className="input-inner">
           {onModelChange && (
-            <select className="input-model-select" value={model}
-              onChange={e => onModelChange(e.target.value)} title="Model">
-              <option value="gpt-oss-20b">gpt-oss-20b</option>
-              <option value="gpt-oss-120b">gpt-oss-120b</option>
-              <option value="compound-mini">compound-mini</option>
-              <option value="compound">compound</option>
-              <option value="qwen-3.6-27b">qwen-3.6-27b</option>
-            </select>
+            <div className="model-switcher" ref={modelWrapRef}>
+              <button type="button" className="model-btn" onClick={() => setModelOpen(o => !o)}>
+                <div className="model-btn-dot" style={{ background: (MODEL_OPTIONS.find(o => o.value === model) || MODEL_OPTIONS[0]).color }} />
+                <span>{(MODEL_OPTIONS.find(o => o.value === model) || MODEL_OPTIONS[0]).label}</span>
+                <span style={{ fontSize: '0.55rem', opacity: 0.6 }}>▾</span>
+              </button>
+              <div className={`model-dropdown${modelOpen ? ' open' : ''}`}>
+                {MODEL_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`model-option${model === opt.value ? ' active' : ''}`}
+                    onClick={() => { onModelChange(opt.value); setModelOpen(false); }}
+                  >
+                    <div className="model-option-dot" style={{ background: opt.color }} />
+                    <div className="model-option-body">
+                      <div className="model-option-name">{opt.label}</div>
+                      <div className="model-option-desc">{opt.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           <input ref={inputRef} type="text" className="input-main" value={input}
             onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
