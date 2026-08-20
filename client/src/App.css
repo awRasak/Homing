@@ -1773,6 +1773,8 @@ input.pf-input:focus {
 .modal-tab-panel.active { display: flex; flex-direction: column; gap: 20px; }
 
 .add-row { display: flex; gap: 7px; margin-bottom: 7px; }
+.add-row .pf-input { flex: 1; min-width: 0; }
+.add-row .btn-add-topic { width: auto; flex-shrink: 0; }
 .empty-note { font-size: 0.72rem; color: var(--grey-light); font-weight: 300; line-height: 1.7; padding: 8px 2px; }
 
 /* ── Recipients ── */
