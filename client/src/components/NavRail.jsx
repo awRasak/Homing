@@ -1,13 +1,13 @@
 const NAV_ITEMS = [
-  { id: 'becca', icon: '🤖', title: 'Homin' },
-  { id: 'proposals', icon: '📄', title: 'Proposals' },
+  { id: 'becca', icon: '/icons/robot.png', title: 'Homin' },
+  { id: 'proposals', icon: '/icons/file-text.png', title: 'Proposals' },
 ];
 
 export default function NavRail({ section, onNavigate, theme, onToggleTheme, onOpenProfile }) {
   return (
     <nav className="nav-rail no-print">
       <div className="nav-logo" onClick={() => onNavigate('proposals')} title="Homing">
-        ✦
+        <img src="/icons/sparkles.png" alt="" className="nav-logo-img" />
       </div>
       {NAV_ITEMS.map((item) => (
         <div
@@ -16,7 +16,7 @@ export default function NavRail({ section, onNavigate, theme, onToggleTheme, onO
           title={item.title}
           onClick={() => onNavigate(item.id)}
         >
-          {item.icon}
+          <img src={item.icon} alt="" className="nav-item-img" />
         </div>
       ))}
       <div className="nav-spacer" />
@@ -25,7 +25,7 @@ export default function NavRail({ section, onNavigate, theme, onToggleTheme, onO
         title="Settings"
         onClick={onOpenProfile}
       >
-        ⚙️
+        <img src="/icons/settings.png" alt="" className="nav-item-img" />
       </div>
       <button
         type="button"
@@ -33,7 +33,7 @@ export default function NavRail({ section, onNavigate, theme, onToggleTheme, onO
         title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         onClick={onToggleTheme}
       >
-        {theme === 'dark' ? '☀️' : '🌙'}
+        <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="theme-toggle-img" />
       </button>
     </nav>
   );

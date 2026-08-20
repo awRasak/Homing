@@ -561,7 +561,8 @@ export default function App() {
                 {['editor', 'recipients', 'campaigns', 'dashboard'].map(t => (
                   <button key={t} className={`becca-tab ${proposalTab === t ? 'active' : ''}`}
                     onClick={() => setProposalTab(t)}>
-                    {t === 'editor' ? '✏️ Editor' : t === 'recipients' ? '👤 Recipients' : t === 'campaigns' ? '📧 Campaigns' : '📊 Dashboard'}
+                    <img className="becca-tab-icon" src={t === 'editor' ? '/icons/pencil.png' : t === 'recipients' ? '/icons/users.png' : t === 'campaigns' ? '/icons/mail.png' : '/icons/dashboard.png'} alt="" />
+                    <span>{t === 'editor' ? 'Editor' : t === 'recipients' ? 'Recipients' : t === 'campaigns' ? 'Campaigns' : 'Dashboard'}</span>
                   </button>
                 ))}
               </div>

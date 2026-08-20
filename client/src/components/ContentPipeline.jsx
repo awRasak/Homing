@@ -13,11 +13,11 @@ const STATUSES = [
 ];
 
 const PIPELINE_STEPS = [
-  { key: 'scout', icon: '📡', label: 'Scout', desc: 'Find news' },
-  { key: 'write', icon: '✍️', label: 'Write', desc: 'Draft post' },
-  { key: 'image', icon: '🎨', label: 'Image', desc: 'Cover art' },
-  { key: 'seo', icon: '🔍', label: 'SEO', desc: 'Audit score' },
-  { key: 'publish', icon: '📤', label: 'Publish', desc: 'Go live' },
+  { key: 'scout', icon: '/icons/watchlist.png', label: 'Scout', desc: 'Find news' },
+  { key: 'write', icon: '/icons/write.png', label: 'Write', desc: 'Draft post' },
+  { key: 'image', icon: '/icons/image.png', label: 'Image', desc: 'Cover art' },
+  { key: 'seo', icon: '/icons/seo.png', label: 'SEO', desc: 'Audit score' },
+  { key: 'publish', icon: '/icons/publish.png', label: 'Publish', desc: 'Go live' },
 ];
 
 function SeoScore({ score }) {
@@ -29,16 +29,16 @@ function SeoScore({ score }) {
   );
 }
 
-export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview }) {
+export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview, onOpen }) {
   const [expanded, setExpanded] = useState(false);
   const statusObj = STATUSES.find(s => s.value === post.status) || STATUSES[0];
 
   return (
     <div className={`pipeline-post ${expanded ? 'expanded' : ''}`}>
-      <div className="pp-head" onClick={() => setExpanded(!expanded)}>
+      <div className="pp-head" onClick={() => onOpen ? onOpen(post) : setExpanded(!expanded)}>
         <div className="pp-head-l">
           <span className="pp-status-dot" style={{ background: statusObj.color }} />
-          <div>
+          <div className="pp-head-info">
             <div className="pp-title">{esc(post.title || 'Untitled')}</div>
             <div className="pp-meta">
               {post.topic_name && <span className="pp-topic">{esc(post.topic_name)}</span>}
@@ -48,7 +48,6 @@ export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview }) 
           </div>
         </div>
         <div className="pp-head-r">
-          <span className={`pp-status-pill pp-status-${post.status}`}>{statusObj.label}</span>
           <span className="pp-expand">{expanded ? '▾' : '▸'}</span>
         </div>
       </div>
@@ -83,9 +82,6 @@ export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview }) 
             </div>
           )}
           <div className="pp-actions">
-            <select className="pp-status-select" value={post.status} onChange={e => onStatusChange(post.id, e.target.value)}>
-              {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
             {onPreview && <button className="btn-secondary" onClick={() => onPreview(post)}>Preview</button>}
             <button className="btn-secondary" onClick={() => onEdit(post)}>Edit</button>
             <button className="btn-text btn-danger" onClick={() => onDelete(post.id)}>Delete</button>
@@ -179,7 +175,7 @@ export function RunPipelineModal({ topics, onRun, onClose }) {
             <div className="pp-steps">
               {PIPELINE_STEPS.map((s, i) => (
                 <div key={s.key} className={`pp-step ${i <= step ? 'active' : ''} ${i < step ? 'done' : ''}`}>
-                  <div className="pp-step-icon">{i < step ? '✓' : s.icon}</div>
+                  <div className="pp-step-icon">{i < step ? '✓' : <img className="pp-step-img" src={s.icon} alt="" />}</div>
                   <div className="pp-step-label">{s.label}</div>
                   {i < PIPELINE_STEPS.length - 1 && <div className="pp-step-line" />}
                 </div>

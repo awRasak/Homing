@@ -418,11 +418,11 @@ function esc(s) {
    ═══════════════════════════════════════════ */
 
 const TABS = [
-  { key: 'chat', icon: '💬', label: 'Chat' },
-  { key: 'watchlist', icon: '📡', label: 'Watchlist' },
-  { key: 'briefings', icon: '🗂', label: 'Briefings' },
-  { key: 'pipeline', icon: '🛠', label: 'Pipeline' },
-  { key: 'reminders', icon: '🔔', label: 'Reminders' },
+  { key: 'chat', icon: '/icons/chat.png', label: 'Chat' },
+  { key: 'watchlist', icon: '/icons/watchlist.png', label: 'Watchlist' },
+  { key: 'briefings', icon: '/icons/briefings.png', label: 'Briefings' },
+  { key: 'pipeline', icon: '/icons/pipeline.png', label: 'Pipeline' },
+  { key: 'reminders', icon: '/icons/reminders.png', label: 'Reminders' },
 ];
 
 export default function BeccaLayout({
@@ -469,7 +469,7 @@ export default function BeccaLayout({
           <button key={tab.key}
             className={`al-tab ${activeTab === tab.key ? 'active' : ''}`}
             onClick={() => handleTabClick(tab.key)}>
-            <span className="al-tab-icon">{tab.icon}</span>
+            <img className="al-tab-icon" src={tab.icon} alt="" />
             <span className="al-tab-label">{tab.label}</span>
           </button>
         ))}
