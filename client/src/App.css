@@ -547,8 +547,14 @@
   color: var(--ink);
 }
 .panel-step-active {
-  color: var(--ink);
+  color: var(--green-text);
   font-weight: 600;
+  background: var(--green);
+  border-radius: 999px;
+  padding: 0.3rem 0.9rem;
+}
+.panel-step:not(.panel-step-active) {
+  padding: 0.3rem 0.9rem;
 }
 
 .panel-content {
