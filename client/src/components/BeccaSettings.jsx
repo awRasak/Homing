@@ -104,13 +104,14 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
 
         <div className="modal-tabs">
           <div className={`modal-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => setTab('profile')}>Profile</div>
-          <div className={`modal-tab ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>Settings</div>
+          <div className={`modal-tab ${tab === 'context' ? 'active' : ''}`} onClick={() => setTab('context')}>Context & Sources</div>
+          <div className={`modal-tab ${tab === 'preferences' ? 'active' : ''}`} onClick={() => setTab('preferences')}>Preferences</div>
           <div className={`modal-tab ${tab === 'memory' ? 'active' : ''}`} onClick={() => setTab('memory')}>Memory</div>
         </div>
 
         <div className="modal-body">
           {tab === 'profile' && (
-            <div className="modal-tab-panel active">
+            <div className={`modal-tab-panel${tab === 'profile' ? ' active' : ''}`}>
               <div className="pf-row">
                 <div className="pf-group">
                   <div className="pf-label">Name</div>
@@ -124,6 +125,16 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
               <div className="pf-group">
                 <div className="pf-label">Role</div>
                 <input className="pf-input" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Startup Founder, Investment Analyst…" />
+              </div>
+            </div>
+          )}
+
+          {tab === 'context' && (
+            <div className={`modal-tab-panel${tab === 'context' ? ' active' : ''}`}>
+              <div className="pf-group">
+                <div className="pf-label">Context</div>
+                <textarea className="pf-textarea" value={bio} onChange={e => setBio(e.target.value)}
+                  placeholder="Tell Homin about your work, what you track, and why it matters to you…" rows={3} />
               </div>
               <div className="pf-group">
                 <div className="pf-label">Website</div>
@@ -160,16 +171,11 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
                   ))}
                 </div>
               </div>
-              <div className="pf-group">
-                <div className="pf-label">Context</div>
-                <textarea className="pf-textarea" value={bio} onChange={e => setBio(e.target.value)}
-                  placeholder="Tell Homin about your work, what you track, and why it matters to you…" rows={3} />
-              </div>
             </div>
           )}
 
-          {tab === 'settings' && (
-            <div className="modal-tab-panel">
+          {tab === 'preferences' && (
+            <div className={`modal-tab-panel${tab === 'preferences' ? ' active' : ''}`}>
               <div className="pf-group settings-section">
                 <div className="settings-section-title">Search Region</div>
                 <div className="modal-desc" style={{ marginBottom: 10 }}>News, research, and recommendations are scoped to this region by default.</div>
@@ -190,7 +196,7 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
           )}
 
           {tab === 'memory' && (
-            <div className="modal-tab-panel">
+            <div className={`modal-tab-panel${tab === 'memory' ? ' active' : ''}`}>
               <div className="pf-group">
                 <div className="settings-section-title">Homin's Memory</div>
                 <div className="modal-desc" style={{ marginBottom: 10 }}>Things Homin always remembers and filters through in every response.</div>
