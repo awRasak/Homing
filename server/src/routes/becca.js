@@ -44,6 +44,8 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
       messages,
       temperature,
       max_tokens: maxTokens,
+      tools: [],
+      tool_choice: 'none',
     }),
   });
 
@@ -331,7 +333,7 @@ You have these capabilities:
 - MEMORY: Remember something important
 - CHAT: Just have a conversation
 
-When the user asks you to do something, respond with a JSON action block AND a natural reply. Format:
+When the user asks you to do something, respond with a JSON action block AND a natural reply. Do NOT use function/tool calling — output the JSON block as plain text only. Format:
 {
   "action": "ACTION_TYPE",
   "params": { ... },
