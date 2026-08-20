@@ -154,7 +154,7 @@
   letter-spacing: -0.01em;
 }
 .topbar-status {
-  font-size: 0.68rem;
+  font-size: 0.88rem;
   color: var(--grey-light);
   font-weight: 300;
 }
@@ -813,7 +813,7 @@
   line-height: 1.5;
 }
 .live-copy-hint {
-  font-size: 0.72rem;
+  font-size: 0.94rem;
   color: var(--grey-light);
   margin-top: 4px;
 }
@@ -1082,7 +1082,7 @@ select:focus {
 
 .hint-text {
   color: var(--grey-light);
-  font-size: 0.76rem;
+  font-size: 0.99rem;
 }
 
 /* ── Buttons ── */
@@ -1384,6 +1384,7 @@ select:focus {
 }
 .chat-bar input::placeholder {
   color: var(--grey-light);
+  font-size: 1.07rem;
 }
 .chat-send {
   border-radius: 999px;
@@ -1510,7 +1511,7 @@ select:focus {
   letter-spacing: -0.02em;
 }
 .modal-head-title { font-size: 0.85rem; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
-.modal-head-sub { font-size: 0.62rem; font-weight: 300; color: var(--grey-light); margin-top: 2px; line-height: 1.4; }
+.modal-head-sub { font-size: 0.81rem; font-weight: 300; color: var(--grey-light); margin-top: 2px; line-height: 1.4; }
 .modal-close {
   background: var(--surface2);
   border: 1.5px solid var(--grey-border);
@@ -1539,7 +1540,7 @@ select:focus {
 }
 
 .pf-group { display: flex; flex-direction: column; gap: 7px; }
-.modal-desc { font-size: 0.7rem; font-weight: 300; color: var(--grey-light); line-height: 1.6; }
+.modal-desc { font-size: 0.91rem; font-weight: 300; color: var(--grey-light); line-height: 1.6; }
 .quiet-row span { font-size: 0.72rem; font-weight: 400; color: var(--grey-mid); }
 
 .pf-link-row {
@@ -1593,7 +1594,7 @@ input.pf-input:focus {
   background: var(--surface);
   box-shadow: 0 0 0 3px var(--green-soft);
 }
-.pf-input::placeholder { color: var(--grey-light); }
+.pf-input::placeholder { color: var(--grey-light); font-size: 0.99rem; }
 
 .pf-textarea {
   width: 100%;
@@ -1616,7 +1617,7 @@ input.pf-input:focus {
   background: var(--surface);
   box-shadow: 0 0 0 3px var(--green-soft);
 }
-.pf-textarea::placeholder { color: var(--grey-light); }
+.pf-textarea::placeholder { color: var(--grey-light); font-size: 1.07rem; }
 
 .profile-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
 .ptag {
@@ -1775,7 +1776,7 @@ input.pf-input:focus {
 .add-row { display: flex; gap: 7px; margin-bottom: 7px; }
 .add-row .pf-input { flex: 1; min-width: 0; }
 .add-row .btn-add-topic { width: auto; flex-shrink: 0; }
-.empty-note { font-size: 0.72rem; color: var(--grey-light); font-weight: 300; line-height: 1.7; padding: 8px 2px; }
+.empty-note { font-size: 0.94rem; color: var(--grey-light); font-weight: 300; line-height: 1.7; padding: 8px 2px; }
 
 /* ── Recipients ── */
 .recipients-page {
@@ -1896,7 +1897,7 @@ input.pf-input:focus {
   flex: 1;
 }
 .recipients-csv-hint {
-  font-size: 0.92rem;
+  font-size: 1.2rem;
   color: var(--grey-light);
   margin-bottom: 0.75rem;
 }
@@ -1947,7 +1948,7 @@ input.pf-input:focus {
 }
 .batch-hint {
   color: var(--grey-light);
-  font-size: 0.92rem;
+  font-size: 1.2rem;
   margin-bottom: 1rem;
 }
 .batch-empty {
@@ -2498,7 +2499,7 @@ input.pf-input:focus {
 }
 
 .w-sub {
-  font-size: 1.03rem;
+  font-size: 1.34rem;
   font-weight: 300;
   color: var(--grey-mid);
   margin-top: 8px;
@@ -2507,7 +2508,7 @@ input.pf-input:focus {
 }
 
 .w-chips-label {
-  font-size: 0.7rem;
+  font-size: 0.91rem;
   font-weight: 700;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -2727,6 +2728,7 @@ input.input-main:focus {
 
 .input-main::placeholder {
   color: var(--grey-light);
+  font-size: 1.07rem;
 }
 
 .input-send {
@@ -2877,7 +2879,7 @@ input.input-main:focus {
 }
 
 .model-option-desc {
-  font-size: 0.58rem;
+  font-size: 0.75rem;
   color: var(--grey-light);
   font-weight: 300;
   margin-top: 1px;
@@ -3140,7 +3142,7 @@ input.input-main:focus {
 }
 
 .empty-note {
-  font-size: 0.92rem;
+  font-size: 1.2rem;
   color: var(--grey-mid);
   font-weight: 300;
   line-height: 1.7;
@@ -3350,6 +3352,7 @@ input.input-main:focus {
 
 .bc-notes-input::placeholder {
   color: var(--grey-mid);
+  font-size: 0.91rem;
 }
 
 .bc-notes-input:focus {
@@ -4993,7 +4996,7 @@ input.input-main:focus {
 }
 
 .dc-time-hint {
-  font-size: 0.68rem;
+  font-size: 0.88rem;
   color: var(--grey-mid);
   font-weight: 300;
   margin-top: 4px;
