@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { api } from '../api';
 
 const INDUSTRIES = ['Automotive', 'Technology', 'Finance', 'Healthcare', 'Energy', 'Retail', 'Policy / Gov', 'Media', 'Real Estate', 'Education'];
 const USECASES = ['Business decisions', 'Regulatory compliance', 'Investments', 'Research', 'Staying informed', 'Competitive intel'];
@@ -62,6 +63,27 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     if (!val) return;
     onAddMemory(val);
     setMemInput('');
+  }
+
+  const [exporting, setExporting] = useState(false);
+  async function handleExport() {
+    try {
+      setExporting(true);
+      const md = await api.becca.exportKnowledgeBase();
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'homing-knowledge-base.md';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Export failed — try again.');
+    } finally {
+      setExporting(false);
+    }
   }
 
   const initials = name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?';
@@ -185,6 +207,14 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
                     </div>
                   ))}
                   {memory.length === 0 && <div className="empty-note">No memory entries yet.</div>}
+                </div>
+                <div className="settings-section" style={{ marginTop: 16 }}>
+                  <div className="settings-section-title">Export Knowledge Base</div>
+                  <div className="modal-desc" style={{ marginBottom: 10 }}>Download your profile, topics, memory, and every conversation as a markdown file.</div>
+                  <button className="btn-add-topic" onClick={handleExport} disabled={exporting}
+                    style={{ width: 'auto', padding: '0.5rem 1rem' }}>
+                    {exporting ? 'Exporting…' : '⬇ Export all as knowledge base'}
+                  </button>
                 </div>
               </div>
             </div>

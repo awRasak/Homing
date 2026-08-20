@@ -167,6 +167,12 @@ export const api = {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
       }).then(handle),
 
+    exportKnowledgeBase: async (workspace = 'default') => {
+      const res = await fetch(`${BASE}/becca/export?workspace=${workspace}`);
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      return await res.text();
+    },
+
     listTopics: (workspace = 'default') =>
       fetch(`${BASE}/becca/topics?workspace=${workspace}`).then(handle),
     addTopic: (data) =>

@@ -312,6 +312,80 @@ router.get('/chat/:sessionId', (req, res) => {
   res.json(rows);
 });
 
+// ═══════════════════════════════════════════
+// EXPORT — full knowledge base (markdown)
+// ═══════════════════════════════════════════
+router.get('/export', (req, res) => {
+  const ws = req.query.workspace || 'default';
+
+  const profile = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
+  const memory = db.prepare('SELECT * FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC').all(ws);
+  const topics = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? ORDER BY sort_order ASC').all(ws);
+  const reminders = db.prepare('SELECT * FROM becca_reminders WHERE workspace = ? ORDER BY created_at ASC').all(ws);
+  const sessions = db.prepare(`SELECT session_id, MIN(created_at) as started FROM becca_chat_history WHERE workspace = ? GROUP BY session_id ORDER BY started ASC`).all(ws);
+
+  const parts = [];
+  parts.push('# Homing Knowledge Base');
+  parts.push(`\n_Exported ${nowIso()}_\n`);
+
+  parts.push('## Profile');
+  if (profile) {
+    parts.push(`- Name: ${profile.name || ''}`);
+    parts.push(`- Role: ${profile.role || ''}`);
+    parts.push(`- Location: ${profile.location || ''}`);
+    parts.push(`- Website: ${profile.website || ''}`);
+    parts.push(`- Industries: ${JSON.parse(profile.industries || '[]').join(', ') || '—'}`);
+    parts.push(`- Uses: ${JSON.parse(profile.usecases || '[]').join(', ') || '—'}`);
+    const links = JSON.parse(profile.links || '[]');
+    if (links.length) parts.push(`- Reference links: ${links.join(', ')}`);
+    parts.push(`\n> ${profile.bio || ''}\n`);
+  } else {
+    parts.push('_No profile set up._');
+  }
+
+  parts.push('## Tracked Topics');
+  if (topics.length) {
+    topics.forEach(t => parts.push(`- **${t.name}**${t.context ? ` — ${t.context}` : ''}`));
+  } else {
+    parts.push('_None._');
+  }
+
+  parts.push('\n## Memory');
+  if (memory.length) {
+    memory.forEach(m => parts.push(`- ${m.content}`));
+  } else {
+    parts.push('_None._');
+  }
+
+  parts.push('\n## Reminders');
+  if (reminders.length) {
+    reminders.forEach(r => parts.push(`- ${r.text}${r.due ? ` (due ${r.due})` : ''}`));
+  } else {
+    parts.push('_None._');
+  }
+
+  parts.push('\n## Conversations');
+  if (sessions.length) {
+    for (const s of sessions) {
+      const msgs = db.prepare('SELECT role, content, created_at FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at ASC').all(ws, s.session_id);
+      parts.push(`\n### ${s.session_id}`);
+      parts.push(`_${s.started}_`);
+      for (const m of msgs) {
+        const who = m.role === 'user' ? 'You' : 'Homin';
+        parts.push(`\n**${who}:** ${m.content}`);
+      }
+      parts.push('');
+    }
+  } else {
+    parts.push('_No conversations yet._');
+  }
+
+  const md = parts.join('\n');
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="homing-knowledge-base.md"');
+  res.send(md);
+});
+
 router.post('/chat', (req, res) => {
   const ws = req.body.workspace || 'default';
   const id = newId();
