@@ -392,7 +392,7 @@ Always reply naturally and helpfully. Be concise.`;
   }
 });
 
-async function executeAction(action, params, ws, geminiKey) {
+async function executeAction(action, params, ws, model) {
   try {
     switch (action) {
       case 'ADD_TOPIC': {
@@ -428,6 +428,45 @@ async function executeAction(action, params, ws, geminiKey) {
           newId(), ws, text, params.when || null, params.when || '', 0, 0, nowIso()
         );
         return `Reminder set: "${text}"${params.when ? ' — ' + params.when : ''}`;
+      }
+      case 'SEARCH': {
+        const query = (params.query || params.name || '').trim();
+        if (!query) return 'Could not search — no query provided.';
+        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+        const rssRes = await fetch(rssUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (!rssRes.ok) return `Search failed — news feed unavailable (${rssRes.status}).`;
+        const xml = await rssRes.text();
+        const items = [];
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        let m;
+        while ((m = itemRegex.exec(xml)) && items.length < 5) {
+          const block = m[1];
+          const grab = (tag) => {
+            const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+            if (!match) return '';
+            return match[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").trim();
+          };
+          const title = grab('title');
+          const sourceMatch = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
+          const source = sourceMatch ? sourceMatch[1].trim() : 'News';
+          const link = grab('link') || grab('guid');
+          items.push({ title, source, url: link });
+        }
+        if (items.length === 0) return `No results found for "${query}".`;
+        let formatted = '';
+        try {
+          const summarized = await callGroq({
+            model,
+            system: 'You are a research assistant. Given raw search results, return a concise bullet-point summary of up to 5 findings, each on its own line starting with "- ". Include the source name in brackets and keep it factual. No markdown headers.',
+            user: JSON.stringify(items),
+            temperature: 0.3,
+            maxTokens: 1024,
+          });
+          formatted = summarized.trim();
+        } catch {
+          formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
+        }
+        return formatted;
       }
       default:
         return null;
