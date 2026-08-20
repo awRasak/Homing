@@ -1,13 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
+import { WELCOME } from '../lib/welcome';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function todaySessionId(ws) {
-  const d = new Date().toISOString().slice(0, 10);
-  return `${ws}:${d}`;
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${ws}:${y}-${m}-${day}`;
 }
 
 export default function BeccaChat({ topics, profile, memory, workspace, activeSession, onSelectSession, model, onModelChange }) {
@@ -94,13 +98,7 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
     setBusy(false);
   }
 
-  const quickChips = [
-    'Track AI regulation',
-    'What\'s new in crypto?',
-    'Give me a briefing',
-    'Remember: always frame for enterprise',
-    'Remind me to review the pipeline tomorrow',
-  ];
+  const quickChips = WELCOME.quickChips;
 
   return (
     <div className="becca-chat becca-chat-only">
@@ -108,17 +106,21 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
         {messages.length === 0 && (
           <div className="becca-welcome">
             <div className="w-greeting">
-              <div className="w-avatar">✦</div>
               <div>
-                <div className="w-hi">Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}{profile?.name ? `, ${profile.name.split(' ')[0]}` : ''}!</div>
-                <div className="w-main">How can I help you <span>today?</span></div>
-                <div className="w-sub">I'm your personal intelligence assistant. Ask me anything, tell me what to track, or say "give me a briefing".</div>
+                <div className="w-hi">{WELCOME.greeting()}{profile?.name ? `, ${profile.name.split(' ')[0]}` : ''}!</div>
+                <div className="w-main">{WELCOME.main} <span>{WELCOME.mainAccent}</span></div>
+                <div className="w-sub">{WELCOME.sub}</div>
               </div>
             </div>
             <div>
-              <div className="w-chips-label">Try saying…</div>
+              <div className="w-chips-label">{WELCOME.chipsLabel}</div>
               <div className="chips-row">
-                {quickChips.map(c => (
+                {quickChips.slice(0, 3).map(c => (
+                  <button key={c} className="chip" onClick={() => { setInput(''); appendUser(c); handleQuickSend(c); }}>{c}</button>
+                ))}
+              </div>
+              <div className="chips-row chips-row-2">
+                {quickChips.slice(3).map(c => (
                   <button key={c} className="chip" onClick={() => { setInput(''); appendUser(c); handleQuickSend(c); }}>{c}</button>
                 ))}
               </div>
@@ -151,9 +153,6 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
 
       <div className="becca-input-bar">
         <div className="input-inner">
-          <input ref={inputRef} type="text" className="input-main" value={input}
-            onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="Ask me anything, or say 'track [topic]', 'briefing'…" disabled={busy} />
           {onModelChange && (
             <select className="input-model-select" value={model}
               onChange={e => onModelChange(e.target.value)} title="Model">
@@ -164,6 +163,9 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
               <option value="qwen-3.6-27b">qwen-3.6-27b</option>
             </select>
           )}
+          <input ref={inputRef} type="text" className="input-main" value={input}
+            onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+            placeholder="Ask me anything, or say 'track [topic]', 'briefing'…" disabled={busy} />
           <button className="input-send" onClick={handleSend} disabled={busy || !input.trim()}>↑</button>
         </div>
       </div>

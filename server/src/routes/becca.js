@@ -21,7 +21,11 @@ function resolveGroqModel(model) {
   return 'openai/gpt-oss-20b';
 }
 
-async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 4096 }) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 4096 }, retriesLeft = 2) {
   const key = process.env.GROQ_API_KEY || '';
   if (!key) throw new Error('GROQ_API_KEY is not configured');
 
@@ -45,6 +49,14 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
 
   if (!response.ok) {
     const errText = await response.text();
+    // Groq's 429 body includes "Please try again in Xs" — honor that instead
+    // of guessing, so we don't hammer an already-throttled account.
+    if (response.status === 429 && retriesLeft > 0) {
+      const waitMatch = errText.match(/try again in ([\d.]+)s/i);
+      const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1]) * 1000) + 250 : 4000;
+      await sleep(waitMs);
+      return callGroq({ model, system, user, temperature, maxTokens }, retriesLeft - 1);
+    }
     throw new Error(`Groq API error ${response.status}: ${errText.slice(0, 300)}`);
   }
 
@@ -225,8 +237,11 @@ router.delete('/memory/:id', (req, res) => {
 // CHAT HISTORY — sessions by day
 // ═══════════════════════════════════════════
 function todaySessionId(ws) {
-  const d = new Date().toISOString().slice(0, 10);
-  return `${ws}:${d}`;
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${ws}:${y}-${m}-${day}`;
 }
 
 router.get('/chat', (req, res) => {
@@ -519,7 +534,13 @@ router.post('/pipeline/scout', async (req, res) => {
     const { topic, topicContext, model } = req.body;
     if (!topic) return res.status(400).json({ error: 'Topic required' });
 
-    const searchQuery = `"${topic}"${topicContext ? ' ' + topicContext : ''}`;
+    // Plain (unquoted) search on the topic alone — wrapping it in exact-phrase
+    // quotes made Google News match almost nothing, since real articles rarely
+    // contain the literal topic phrase verbatim. topicContext is deliberately
+    // excluded here too: it's meant to steer the write step's angle/tone, but
+    // folding it into the news search made the query so specific it matched
+    // zero articles.
+    const searchQuery = topic;
     const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(searchQuery)}&hl=en-US&gl=US&ceid=US:en`;
 
     const rssRes = await fetch(rssUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -579,16 +600,17 @@ router.post('/pipeline/write', async (req, res) => {
 
     const newsContext = (newsItems || []).map((n, i) => `${i + 1}. ${n.title} - ${n.summary} (${n.source})`).join('\n');
 
-    const prompt = `You are an expert blog writer. Write a ${wordCount || 800}-word blog post about "${topic}"${topicContext ? '. Context: ' + topicContext : ''}.
+    const prompt = `You are an expert blog writer. Write a blog post about "${topic}"${topicContext ? '. Context: ' + topicContext : ''}.
 
 Use these news sources as reference:
 ${newsContext || 'No specific news sources provided.'}
 
 Requirements:
+- HARD REQUIREMENT: The "body" field MUST be ${wordCount || 800} words minimum. This is non-negotiable. If your first draft is short, add more sections, expand each section with concrete examples and analysis, and elaborate until you exceed the minimum. Count your words before finishing.
 - Tone: ${tone || 'Professional yet approachable'}
 - Include an engaging title (not generic)
 - Write a compelling excerpt (1-2 sentences)
-- Structure with clear sections using ## headers
+- Structure with clear sections using ## headers (use 6-8 sections)
 - Include a strong intro hook and conclusion with call to action
 - Suggest 3-5 relevant tags
 
@@ -596,7 +618,7 @@ Return ONLY valid JSON with this exact structure:
 {
   "title": "Blog post title",
   "slug": "blog-post-slug",
-  "body": "Full markdown blog post body",
+  "body": "Full markdown blog post body, ${wordCount || 800}+ words",
   "excerpt": "1-2 sentence excerpt",
   "tags": ["tag1", "tag2", "tag3"]
 }`;
@@ -606,10 +628,8 @@ Return ONLY valid JSON with this exact structure:
       system: 'You are an expert blog writer. Always respond with valid JSON only, no markdown.',
       user: prompt,
       temperature: 0.7,
-      // Kept comfortably under this account's 8000 TPM limit for gpt-oss-120b
-      // (a full 8192-token request alone exceeds it) while still covering a
-      // ~800-1200 word post plus JSON wrapper overhead.
-      maxTokens: 3500,
+      // Room for a 1200+ word post plus JSON wrapper overhead
+      maxTokens: 4000,
     });
 
     let post = {};
@@ -730,13 +750,23 @@ router.post('/pipeline/run', async (req, res) => {
       body: JSON.stringify({ topic: topicName, topicContext, newsItems, tone, wordCount, model })
     });
     const post = await writeRes.json();
+    // Abort rather than silently saving an empty draft — a failed write step
+    // (rate limit, bad JSON from the model, etc.) used to fall through and
+    // save a blank "Untitled" post with no visible error.
+    if (!writeRes.ok || post.error || !post.title || !post.body) {
+      throw new Error(post.error || 'Write step returned no content');
+    }
 
     // Step 3: Generate cover image
     const imgRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/image`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: post.title, topic: topicName })
     });
-    const { url: coverUrl } = await imgRes.json();
+    const imgData = await imgRes.json();
+    if (!imgRes.ok || imgData.error) {
+      throw new Error(imgData.error || 'Image generation failed');
+    }
+    const coverUrl = imgData.url;
 
     // Step 4: SEO check on draft
     const seoRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/seo/check`, {

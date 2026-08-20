@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import BeccaChat from './BeccaChat';
-import PostPreviewPage from './PostPreviewPage';
+import { renderMarkdown } from './PostPreviewPage';
 import { RunPipelineModal, PostCard, EditPostModal } from './ContentPipeline';
 
 function formatSessionDate(dateStr) {
@@ -15,8 +15,11 @@ function formatSessionDate(dateStr) {
 }
 
 function todaySessionId(ws) {
-  const d = new Date().toISOString().slice(0, 10);
-  return `${ws}:${d}`;
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${ws}:${y}-${m}-${day}`;
 }
 
 /* ── Time Picker Modal ── */
@@ -237,13 +240,13 @@ function PanelBriefings({ briefings, settings, onSaveSettings }) {
 }
 
 /* ── Panel: Pipeline ── */
-function PanelPipeline({ topics, workspace }) {
+function PanelPipeline({ topics, workspace, onOpenPost, refreshKey }) {
   const [posts, setPosts] = useState([]);
   const [showRun, setShowRun] = useState(false);
   const [editPost, setEditPost] = useState(null);
-  const [previewPost, setPreviewPost] = useState(null);
+  const [view, setView] = useState('drafts');
 
-  useEffect(() => { loadPosts(); }, [workspace]);
+  useEffect(() => { loadPosts(); }, [workspace, refreshKey]);
 
   async function loadPosts() {
     try {
@@ -274,32 +277,34 @@ function PanelPipeline({ topics, workspace }) {
     setEditPost(null);
   }
 
-  const drafts = posts.filter(p => p.status === 'draft').length;
-  const reviews = posts.filter(p => p.status === 'review').length;
-  const published = posts.filter(p => p.status === 'published').length;
+  const draftPosts = posts.filter(p => p.status === 'draft' || p.status === 'review');
+  const readyPosts = posts.filter(p => p.status === 'ready' || p.status === 'published');
+  const visiblePosts = view === 'drafts' ? draftPosts : readyPosts;
 
   return (
     <div className="pipeline-panel">
       <div className="pp-card">
         <div className="cp-label">Content Pipeline</div>
-        <div className="pp-stats">
-          <div className="pp-stat"><span className="pp-stat-val">{drafts}</span><span className="pp-stat-lbl">Drafts</span></div>
-          <div className="pp-stat"><span className="pp-stat-val" style={{ color: '#c08000' }}>{reviews}</span><span className="pp-stat-lbl">Review</span></div>
-          <div className="pp-stat"><span className="pp-stat-val" style={{ color: '#3b82f6' }}>{published}</span><span className="pp-stat-lbl">Pub'd</span></div>
-        </div>
         <button className="btn-add-topic" onClick={() => setShowRun(true)}>▶ Run Pipeline</button>
       </div>
 
       <div className="pp-card pp-card-list">
-        <div className="cp-label">Posts ({posts.length})</div>
-        {posts.length === 0 ? (
-          <div className="cp-empty">No posts yet — run the pipeline to generate one</div>
+        <div className="pp-tabs">
+          <button className={`pp-tab ${view === 'drafts' ? 'active' : ''}`} onClick={() => setView('drafts')}>
+            Drafts ({draftPosts.length})
+          </button>
+          <button className={`pp-tab ${view === 'ready' ? 'active' : ''}`} onClick={() => setView('ready')}>
+            Ready ({readyPosts.length})
+          </button>
+        </div>
+        {visiblePosts.length === 0 ? (
+          <div className="cp-empty">{view === 'drafts' ? 'No drafts yet — run the pipeline to generate one' : 'No posts ready to post'}</div>
         ) : (
           <div className="pp-post-list">
-            {posts.map(p => (
+            {visiblePosts.map(p => (
               <PostCard key={p.id} post={p}
                 onEdit={setEditPost} onDelete={handleDeletePost}
-                onStatusChange={handleStatusChange} onPreview={setPreviewPost} />
+                onStatusChange={handleStatusChange} onOpen={onOpenPost} />
             ))}
           </div>
         )}
@@ -307,7 +312,6 @@ function PanelPipeline({ topics, workspace }) {
 
       {showRun && <RunPipelineModal topics={topics} onRun={handleRun} onClose={() => setShowRun(false)} />}
       {editPost && <EditPostModal post={editPost} onSave={handleSavePost} onClose={() => setEditPost(null)} />}
-      {previewPost && <PostPreviewPage post={previewPost} onClose={() => setPreviewPost(null)} />}
     </div>
   );
 }
@@ -363,6 +367,52 @@ function PanelReminders({ reminders, onAddReminder, onDismissReminder }) {
   );
 }
 
+/* ── Draft Drawer (blog post preview, shrinks chat area) ── */
+function DraftDrawer({ post, onClose, onMove }) {
+  const isDraftish = post.status === 'draft' || post.status === 'review';
+  return (
+    <div className="draft-drawer">
+      <div className="draft-drawer-head">
+        <div className="draft-drawer-title">{esc(post.title || 'Untitled Draft')}</div>
+        <button className="draft-drawer-close" onClick={onClose} title="Close">✕</button>
+      </div>
+      <div className="draft-drawer-scroll">
+        {post.cover_url && <img className="preview-cover" src={post.cover_url} alt="Cover" />}
+        <header className="preview-header">
+          {post.topic_name && <span className="preview-topic">{esc(post.topic_name)}</span>}
+          {post.tags?.length > 0 && (
+            <div className="preview-tags">
+              {post.tags.map((t, i) => <span key={i} className="preview-tag">{esc(t)}</span>)}
+            </div>
+          )}
+          {post.excerpt && <p className="preview-excerpt">{esc(post.excerpt)}</p>}
+        </header>
+        <div className="preview-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(post.body) }} />
+        {post.news_sources?.length > 0 && (
+          <footer className="preview-sources">
+            <h4>Sources</h4>
+            {post.news_sources.map((s, i) => (
+              <div key={i} className="preview-source">
+                {s.url ? <a href={s.url} target="_blank" rel="noopener">{esc(s.title || s.source)}</a> : esc(s.title || s.source)}
+              </div>
+            ))}
+          </footer>
+        )}
+      </div>
+      <div className="draft-drawer-actions">
+        <button className="draft-drawer-move" onClick={() => onMove(isDraftish ? 'ready' : 'draft')}>
+          {isDraftish ? '→ Ready to Post' : '← Back to Drafts'}
+        </button>
+        <span className="draft-drawer-status">{post.status}</span>
+      </div>
+    </div>
+  );
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /* ═══════════════════════════════════════════
    LAYOUT
    ═══════════════════════════════════════════ */
@@ -383,6 +433,8 @@ export default function BeccaLayout({
 }) {
   const [activeSession, setActiveSession] = useState(null);
   const [panelWidth, setPanelWidth] = useState(320);
+  const [openDraft, setOpenDraft] = useState(null);
+  const [draftMoveNonce, setDraftMoveNonce] = useState(0);
   const activeTab = beccaSection;
 
   function handleTabClick(key) {
@@ -440,13 +492,21 @@ export default function BeccaLayout({
               onSaveSettings={onSaveSettings} />
           )}
           {activeTab === 'pipeline' && (
-            <PanelPipeline topics={topics} workspace={workspace} />
+            <PanelPipeline topics={topics} workspace={workspace} onOpenPost={setOpenDraft} refreshKey={draftMoveNonce} />
           )}
           {activeTab === 'reminders' && (
             <PanelReminders reminders={reminders} onAddReminder={onAddReminder} onDismissReminder={onDismissReminder} />
           )}
         </div>
         <div className="al-resizer" onMouseDown={startResize} title="Drag to resize" />
+        {openDraft && (
+          <DraftDrawer post={openDraft} onClose={() => setOpenDraft(null)}
+            onMove={async (status) => {
+              await api.becca.updatePost(openDraft.id, { status });
+              setOpenDraft({ ...openDraft, status });
+              setDraftMoveNonce(n => n + 1);
+            }} />
+        )}
         <div className="al-chat">
           <BeccaChat topics={topics} profile={profile} memory={memory}
             workspace={workspace} activeSession={activeSession}

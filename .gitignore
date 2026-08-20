@@ -8,6 +8,10 @@ server/data/*.db
 server/data/*.db-*
 server/.env
 
+# client
+client/.env
+client/.env.local
+
 # logs
 npm-debug.log*
 yarn-debug.log*
