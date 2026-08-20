@@ -92,13 +92,16 @@ export default function App() {
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
+    setLoading(false);
     (async () => {
       try {
         const status = await api.status();
         setProviders(status.providers || {});
         setActiveProvider(status.activeProvider || 'anthropic');
         setAiConfigured(Object.values(status.providers || {}).some((p) => p.configured));
+      } catch { /* providers optional */ }
 
+      try {
         const list = await api.listDesigns();
         if (list.length === 0) {
           const created = await api.createDesign({});
@@ -112,29 +115,27 @@ export default function App() {
           const initialId = list.find((d) => d.id === saved)?.id || list[0].id;
           setActiveDesignId(initialId);
         }
-
-        // Load Becca data
-        try {
-          const [topics, profile, memory, reminders, briefings, settings] = await Promise.all([
-            api.becca.listTopics(BECCA_WORKSPACE),
-            api.becca.getProfile(BECCA_WORKSPACE),
-            api.becca.listMemory(BECCA_WORKSPACE),
-            api.becca.listReminders(BECCA_WORKSPACE),
-            api.becca.listBriefings(BECCA_WORKSPACE, 100),
-            api.becca.getSettings(BECCA_WORKSPACE),
-          ]);
-          setBeccaTopics(topics || []);
-          setBeccaProfile(profile);
-          setBeccaMemory(memory || []);
-          setBeccaReminders(reminders || []);
-          setBeccaBriefings(briefings || []);
-          if (settings) setBeccaSettings(settings);
-        } catch { /* becca not available */ }
       } catch (err) {
         console.error('Failed to load designs', err);
-      } finally {
-        setLoading(false);
       }
+
+      // Load Becca data
+      try {
+        const [topics, profile, memory, reminders, briefings, settings] = await Promise.all([
+          api.becca.listTopics(BECCA_WORKSPACE),
+          api.becca.getProfile(BECCA_WORKSPACE),
+          api.becca.listMemory(BECCA_WORKSPACE),
+          api.becca.listReminders(BECCA_WORKSPACE),
+          api.becca.listBriefings(BECCA_WORKSPACE, 100),
+          api.becca.getSettings(BECCA_WORKSPACE),
+        ]);
+        setBeccaTopics(topics || []);
+        setBeccaProfile(profile);
+        setBeccaMemory(memory || []);
+        setBeccaReminders(reminders || []);
+        setBeccaBriefings(briefings || []);
+        if (settings) setBeccaSettings(settings);
+      } catch { /* becca not available */ }
     })();
   }, []);
 
@@ -447,6 +448,45 @@ export default function App() {
     setBeccaReminders(prev => [{ id: result.id, text: data.text, due: data.due || null, when_raw: data.when_raw || '', fired: 0, dismissed: 0, created_at: now }, ...prev]);
   }
 
+  useEffect(() => {
+    function handleResizeMouseDown(e) {
+      const resizer = e.target.closest('.editor-resizer, .editor-resizer-right');
+      if (!resizer) return;
+      e.preventDefault();
+      const layout = resizer.closest('.editor-layout');
+      const sidebar = layout.querySelector('.editor-sidebar');
+      const panel = layout.querySelector('.editor-panel');
+      const isRight = resizer.classList.contains('editor-resizer-right');
+      const startX = e.clientX;
+      const startSidebarW = sidebar.offsetWidth;
+      const startPanelW = panel.offsetWidth;
+
+      function onMouseMove(ev) {
+        const dx = ev.clientX - startX;
+        if (isRight) {
+          const newW = Math.max(300, Math.min(560, startPanelW - dx));
+          panel.style.width = newW + 'px';
+        } else {
+          const newW = Math.max(180, Math.min(400, startSidebarW + dx));
+          sidebar.style.width = newW + 'px';
+          sidebar.style.minWidth = newW + 'px';
+        }
+      }
+      function onMouseUp() {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+    document.addEventListener('mousedown', handleResizeMouseDown);
+    return () => document.removeEventListener('mousedown', handleResizeMouseDown);
+  }, []);
+
   if (loading) {
     return <div className="app-loading">Loading…</div>;
   }
@@ -533,6 +573,7 @@ export default function App() {
                       onDelete={handleDeleteDesign}
                     />
                   </div>
+                  <div className="editor-resizer" />
 
                   <div className="editor-canvas">
                     {!aiConfigured && (
@@ -644,6 +685,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                  <div className="editor-resizer-right" />
 
                   <div className="editor-panel no-print">
                     <div className="panel-step-indicator">
