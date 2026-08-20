@@ -25,7 +25,7 @@ const ACTIVE_ID_KEY = 'homing:activeDesignId';
 const THEME_KEY = 'homing:theme';
 
 const SECTION_META = {
-  proposals: { name: 'Proposals', status: 'Tailored proposal generator' },
+  proposals: { name: 'Proposal', status: 'Tailored proposal generator' },
   recipients: { name: 'Recipients', status: 'Manage your email list' },
   campaigns: { name: 'Campaigns', status: 'Send proposals at scale' },
   dashboard: { name: 'Dashboard', status: 'Your saved proposals' },
@@ -511,7 +511,7 @@ export default function App() {
         <header className="topbar no-print">
           <div className={`topbar-l ${section === 'becca' ? 'clickable' : ''}`}
             onClick={section === 'becca' ? () => setBeccaSection('chat') : undefined}>
-            {section !== 'becca' && <img src="/icons/logomark.png" alt="" className="topbar-logo-img" />}
+            {section !== 'becca' && section !== 'proposals' && <img src="/icons/logomark.png" alt="" className="topbar-logo-img" />}
             <div>
               <div className="topbar-name">{meta.name}</div>
               <div className="topbar-status">{meta.status}</div>
@@ -709,40 +709,15 @@ export default function App() {
 
                   <div className="editor-panel no-print">
                     <div className="panel-step-indicator">
-                      <span className={`panel-step ${tab === 'setup' ? 'panel-step-active' : tab === 'generate' || tab === 'batch' ? 'panel-step-done' : ''}`}>
-                        <span className="panel-step-num">1</span> Setup
-                      </span>
-                      <span className="panel-step-arrow">→</span>
-                      <span className={`panel-step ${tab === 'generate' ? 'panel-step-active' : tab === 'batch' ? 'panel-step-done' : ''}`}>
-                        <span className="panel-step-num">2</span> Generate
-                      </span>
-                      <span className="panel-step-arrow">→</span>
-                      <span className={`panel-step ${tab === 'batch' ? 'panel-step-active' : ''}`}>
-                        <span className="panel-step-num">3</span> Batch
-                      </span>
-                    </div>
-                    <div className="panel-tabs-lg">
-                      <button
-                        type="button"
-                        className={tab === 'setup' ? 'panel-tab-lg panel-tab-lg-active' : 'panel-tab-lg'}
-                        onClick={() => onTabChange('setup')}
-                      >
+                      <span className={`panel-step ${tab === 'setup' ? 'panel-step-active' : ''}`} onClick={() => onTabChange('setup')}>
                         Setup
-                      </button>
-                      <button
-                        type="button"
-                        className={tab === 'generate' ? 'panel-tab-lg panel-tab-lg-active' : 'panel-tab-lg'}
-                        onClick={() => onTabChange('generate')}
-                      >
+                      </span>
+                      <span className={`panel-step ${tab === 'generate' ? 'panel-step-active' : ''}`} onClick={() => onTabChange('generate')}>
                         Generate
-                      </button>
-                      <button
-                        type="button"
-                        className={tab === 'batch' ? 'panel-tab-lg panel-tab-lg-active' : 'panel-tab-lg'}
-                        onClick={() => onTabChange('batch')}
-                      >
+                      </span>
+                      <span className={`panel-step ${tab === 'batch' ? 'panel-step-active' : ''}`} onClick={() => onTabChange('batch')}>
                         Batch
-                      </button>
+                      </span>
                     </div>
                     <div className="panel-content">
                       {tab === 'setup' && (

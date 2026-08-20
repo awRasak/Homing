@@ -526,7 +526,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.3rem;
+  gap: 1.5rem;
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--grey-border);
   background: var(--surface);
@@ -541,72 +541,16 @@
   color: var(--grey-light);
   transition: color 0.15s;
   letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.panel-step:hover {
+  color: var(--ink);
 }
 .panel-step-active {
   color: var(--ink);
   font-weight: 600;
 }
-.panel-step-done {
-  color: var(--green-dark);
-}
-.panel-step-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--grey-pale);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-.panel-step-active .panel-step-num {
-  background: var(--green);
-  color: var(--green-text);
-}
-.panel-step-done .panel-step-num {
-  background: var(--green-soft);
-  color: var(--green-text);
-}
-.panel-step-arrow {
-  color: var(--grey-light);
-  font-size: 0.7rem;
-  margin: 0 0.15rem;
-}
 
-/* ── Panel Tabs (large) ── */
-.panel-tabs-lg {
-  display: flex;
-  border-bottom: 1px solid var(--grey-border);
-  background: var(--surface);
-  flex-shrink: 0;
-}
-.panel-tab-lg {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 16px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--grey-light);
-  transition: all 0.2s;
-  text-align: center;
-}
-.panel-tab-lg:hover {
-  color: var(--ink);
-}
-.panel-tab-lg-active {
-  color: var(--ink);
-  font-weight: 600;
-  border-bottom-color: var(--green-dark);
-}
 .panel-content {
   flex: 1;
   overflow-y: auto;
