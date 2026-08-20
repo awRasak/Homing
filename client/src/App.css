@@ -214,7 +214,7 @@
   padding: 0;
   text-align: left;
   cursor: pointer;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   border-radius: var(--radius-md);
   transition: transform 0.18s;
 }
@@ -391,7 +391,7 @@
   font-size: 0.92rem;
   font-weight: 500;
   color: var(--ink);
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -785,7 +785,7 @@
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 0.7rem;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   white-space: nowrap;
   pointer-events: none;
   z-index: 10;
@@ -893,7 +893,7 @@
   font-weight: 500;
   color: var(--grey-light);
   border-bottom: 2px solid transparent;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   transition: all 0.15s;
 }
 .panel-tab:hover {
@@ -949,7 +949,7 @@ select {
   font-size: 0.92rem;
   color: var(--ink);
   width: 100%;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   outline: none;
   transition: all 0.15s;
 }
@@ -1095,7 +1095,7 @@ select:focus {
   font-size: 0.7rem;
   font-weight: 700;
   cursor: pointer;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   transition: all 0.2s;
   box-shadow: 0 4px 16px rgba(200, 240, 0, 0.3);
 }
@@ -1120,7 +1120,7 @@ select:focus {
   font-size: 0.82rem;
   font-weight: 500;
   cursor: pointer;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   transition: all 0.15s;
 }
 .btn-secondary:hover {
@@ -1136,7 +1136,7 @@ select:focus {
   font-weight: 500;
   cursor: pointer;
   padding: 0.2rem 0.3rem;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
 }
 .btn-danger {
   color: var(--danger);
@@ -1345,7 +1345,7 @@ select:focus {
   font-size: 0.75rem;
   font-weight: 400;
   cursor: pointer;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   transition: all 0.18s;
 }
 .chat-pill:hover {
@@ -1749,7 +1749,10 @@ input.pf-input:focus {
   border-bottom: 1px solid var(--grey-border);
   padding: 0 26px;
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.modal-tabs::-webkit-scrollbar { display: none; }
 .modal-tab {
   padding: 12px 18px;
   font-size: 0.7rem;
@@ -1762,6 +1765,7 @@ input.pf-input:focus {
   margin-bottom: -1px;
   transition: all 0.18s;
   font-family: inherit;
+  white-space: nowrap;
 }
 .modal-tab:hover { color: var(--ink); }
 .modal-tab.active { color: var(--ink); border-bottom-color: var(--green-dark); }
@@ -2790,7 +2794,7 @@ input.input-main:focus {
   padding: 5px 10px 5px 8px;
   cursor: pointer;
   transition: all 0.15s;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
   font-size: 0.62rem;
   font-weight: 500;
   color: var(--grey-mid);
@@ -2841,7 +2845,7 @@ input.input-main:focus {
   border-left: none;
   border-right: none;
   border-top: none;
-  font-family: 'Outfit', sans-serif;
+  font-family: var(--font);
 }
 .model-option:last-child {
   border-bottom: none;
