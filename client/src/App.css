@@ -2283,7 +2283,7 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 8px 8px 20px;
+  padding: 8px;
   width: 100%;
   max-width: 720px;
   box-shadow: var(--shadow-sm);
@@ -2291,8 +2291,8 @@ select:focus {
 }
 
 .input-inner:focus-within {
-  border-color: var(--green-dark);
-  box-shadow: 0 0 0 4px var(--green-soft), var(--shadow-sm);
+  border-color: var(--grey-border);
+  box-shadow: var(--shadow-sm);
 }
 
 input.input-main {
@@ -2306,6 +2306,12 @@ input.input-main {
   outline: none;
   padding: 6px 0;
   width: auto;
+}
+
+input.input-main:focus {
+  outline: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .input-main::placeholder {
