@@ -63,6 +63,8 @@ const newColumns = [
   ['source_image_height', 'INTEGER'],
   ["source_text_blocks", "TEXT NOT NULL DEFAULT '[]'"],
   ["text_overrides", "TEXT NOT NULL DEFAULT '{}'"],
+  ["pages", "TEXT NOT NULL DEFAULT '[]'"],
+  ["page_overrides", "TEXT NOT NULL DEFAULT '{}'"],
 ];
 for (const [name, def] of newColumns) {
   if (!existingColumns.has(name)) {
@@ -198,6 +200,8 @@ CREATE TABLE IF NOT EXISTS becca_profile (
   name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT '',
   location TEXT NOT NULL DEFAULT '',
+  website TEXT NOT NULL DEFAULT '',
+  links TEXT NOT NULL DEFAULT '[]',
   bio TEXT NOT NULL DEFAULT '',
   industries TEXT NOT NULL DEFAULT '[]',
   usecases TEXT NOT NULL DEFAULT '[]',
@@ -229,6 +233,15 @@ CREATE INDEX IF NOT EXISTS idx_becca_chat_workspace ON becca_chat_history(worksp
 const chatColumns = new Set(db.prepare('PRAGMA table_info(becca_chat_history)').all().map((c) => c.name));
 if (!chatColumns.has('session_id')) {
   db.exec(`ALTER TABLE becca_chat_history ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
+}
+
+// Migration: add website + links to existing becca_profile
+const profileColumns = new Set(db.prepare('PRAGMA table_info(becca_profile)').all().map((c) => c.name));
+if (!profileColumns.has('website')) {
+  db.exec(`ALTER TABLE becca_profile ADD COLUMN website TEXT NOT NULL DEFAULT ''`);
+}
+if (!profileColumns.has('links')) {
+  db.exec(`ALTER TABLE becca_profile ADD COLUMN links TEXT NOT NULL DEFAULT '[]'`);
 }
 
 db.exec(`CREATE INDEX IF NOT EXISTS idx_becca_chat_session ON becca_chat_history(session_id)`);

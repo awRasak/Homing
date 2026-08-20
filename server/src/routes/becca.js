@@ -110,22 +110,32 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
 router.get('/profile', (req, res) => {
   const ws = req.query.workspace || 'default';
   const row = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
-  res.json(row || null);
+  if (!row) return res.json(null);
+  res.json({
+    ...row,
+    industries: JSON.parse(row.industries || '[]'),
+    usecases: JSON.parse(row.usecases || '[]'),
+    links: JSON.parse(row.links || '[]'),
+  });
 });
 
 router.put('/profile', (req, res) => {
   const ws = req.body.workspace || 'default';
   const existing = db.prepare('SELECT id FROM becca_profile WHERE workspace = ?').get(ws);
   const now = nowIso();
+  const website = (req.body.website || '').trim();
+  const links = (req.body.links || []).filter(Boolean);
   if (existing) {
-    db.prepare(`UPDATE becca_profile SET name=?, role=?, location=?, bio=?, industries=?, usecases=?, updated_at=? WHERE workspace=?`).run(
-      req.body.name || '', req.body.role || '', req.body.location || '', req.body.bio || '',
+    db.prepare(`UPDATE becca_profile SET name=?, role=?, location=?, website=?, links=?, bio=?, industries=?, usecases=?, updated_at=? WHERE workspace=?`).run(
+      req.body.name || '', req.body.role || '', req.body.location || '', website,
+      JSON.stringify(links), req.body.bio || '',
       JSON.stringify(req.body.industries || []), JSON.stringify(req.body.usecases || []),
       now, ws
     );
   } else {
-    db.prepare(`INSERT INTO becca_profile (id, workspace, name, role, location, bio, industries, usecases, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
-      newId(), ws, req.body.name || '', req.body.role || '', req.body.location || '', req.body.bio || '',
+    db.prepare(`INSERT INTO becca_profile (id, workspace, name, role, location, website, links, bio, industries, usecases, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      newId(), ws, req.body.name || '', req.body.role || '', req.body.location || '', website,
+      JSON.stringify(links), req.body.bio || '',
       JSON.stringify(req.body.industries || []), JSON.stringify(req.body.usecases || []),
       now, now
     );
@@ -359,6 +369,9 @@ router.post('/chat/message', async (req, res) => {
 
 Current user profile: ${profile ? `${profile.name || 'Unknown'}, ${profile.role || ''}, ${profile.location || ''}` : 'Not set up yet'}
 User's region/country (scope research, news, and recommendations here unless the user asks for elsewhere): ${region || 'unspecified'}
+User's website: ${profile?.website || 'none'}
+Reference links the user trusts (use these as context/sources when relevant):
+${profile?.links?.length ? profile.links.map((l, i) => `- ${i + 1}. ${l}`).join('\n') : 'none'}
 Tracked topics:
 ${topicList || 'No topics tracked yet'}
 Memory:

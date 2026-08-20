@@ -1541,6 +1541,23 @@ select:focus {
 .pf-group { display: flex; flex-direction: column; gap: 7px; }
 .modal-desc { font-size: 0.7rem; font-weight: 300; color: var(--grey-light); line-height: 1.6; }
 .quiet-row span { font-size: 0.72rem; font-weight: 400; color: var(--grey-mid); }
+
+.pf-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.pf-link-row .pf-input { flex: 1; }
+.pf-link-row .mp-del {
+  cursor: pointer;
+  color: var(--grey-light);
+  font-size: 0.7rem;
+  padding: 4px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.pf-link-row .mp-del:hover { color: #e05050; }
 .pf-label {
   font-size: 0.58rem;
   font-weight: 700;

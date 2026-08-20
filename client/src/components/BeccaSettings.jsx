@@ -11,6 +11,8 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [location, setLocation] = useState('');
+  const [website, setWebsite] = useState('');
+  const [links, setLinks] = useState([]);
   const [bio, setBio] = useState('');
   const [industries, setIndustries] = useState([]);
   const [usecases, setUsecases] = useState([]);
@@ -25,6 +27,8 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
       setName(profile.name || '');
       setRole(profile.role || '');
       setLocation(profile.location || '');
+      setWebsite(profile.website || '');
+      setLinks(profile.links || []);
       setBio(profile.bio || '');
       setIndustries(profile.industries || []);
       setUsecases(profile.usecases || []);
@@ -40,7 +44,7 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
   }, [settings]);
 
   function handleSave() {
-    onSaveProfile({ name, role, location, bio, industries, usecases });
+    onSaveProfile({ name, role, location, website, links: links.map(l => l.trim()).filter(Boolean), bio, industries, usecases });
     onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
     onClose();
   }
@@ -98,6 +102,25 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
               <div className="pf-group">
                 <div className="pf-label">Role</div>
                 <input className="pf-input" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Startup Founder, Investment Analyst…" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Website</div>
+                <input className="pf-input" value={website} onChange={e => setWebsite(e.target.value)} placeholder="e.g. https://yourcompany.com" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Reference Links</div>
+                <div className="modal-desc" style={{ marginBottom: 10 }}>Links you trust — Homin uses these as context and sources when relevant.</div>
+                {links.map((l, i) => (
+                  <div className="pf-link-row" key={i}>
+                    <input className="pf-input" value={l} onChange={e => {
+                      const next = [...links]; next[i] = e.target.value; setLinks(next);
+                    }} placeholder="https://…" />
+                    <span className="mp-del" onClick={() => setLinks(links.filter((_, j) => j !== i))}>✕</span>
+                  </div>
+                ))}
+                <div className="add-row" style={{ marginTop: 6 }}>
+                  <button className="btn-add-topic" onClick={() => setLinks([...links, ''])}>+ Add link</button>
+                </div>
               </div>
               <div className="pf-group">
                 <div className="pf-label">Industry</div>
