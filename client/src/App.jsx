@@ -504,7 +504,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <NavRail section={section} onNavigate={setSection} theme={theme} onToggleTheme={toggleTheme}
+      <NavRail section={section} onNavigate={setSection}
         onOpenProfile={() => { setSection('becca'); setBeccaSettingsOpen(true); }} />
 
       <div className="main-area">
@@ -517,25 +517,35 @@ export default function App() {
               <div className="topbar-status">{meta.status}</div>
             </div>
           </div>
-          {section === 'proposals' && (
-            <div className="topbar-r">
-              {activeDesign && saveStatus !== 'idle' && (
-                <span className={`save-status save-status-${saveStatus}`}>
-                  {saveStatus === 'pending' && 'Unsaved changes'}
-                  {saveStatus === 'saving' && 'Saving…'}
-                  {saveStatus === 'retrying' && 'Save failed, retrying…'}
-                  {saveStatus === 'saved' && 'Saved ✓'}
-                  {saveStatus === 'error' && "Couldn't save — check your connection"}
-                </span>
-              )}
-              <button type="button" className="btn-secondary" onClick={() => setEditOpen(true)}>
-                Edit design
-              </button>
-              <button type="button" className="btn-primary" onClick={handleExport} disabled={!currentProposal}>
-                Download PDF
-              </button>
-            </div>
-          )}
+          <div className="topbar-r">
+            <button
+              type="button"
+              className="theme-toggle"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={toggleTheme}
+            >
+              <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="theme-toggle-img" />
+            </button>
+            {section === 'proposals' && (
+              <>
+                {activeDesign && saveStatus !== 'idle' && (
+                  <span className={`save-status save-status-${saveStatus}`}>
+                    {saveStatus === 'pending' && 'Unsaved changes'}
+                    {saveStatus === 'saving' && 'Saving…'}
+                    {saveStatus === 'retrying' && 'Save failed, retrying…'}
+                    {saveStatus === 'saved' && 'Saved ✓'}
+                    {saveStatus === 'error' && "Couldn't save — check your connection"}
+                  </span>
+                )}
+                <button type="button" className="btn-secondary" onClick={() => setEditOpen(true)}>
+                  Edit design
+                </button>
+                <button type="button" className="btn-primary" onClick={handleExport} disabled={!currentProposal}>
+                  Download PDF
+                </button>
+              </>
+            )}
+          </div>
         </header>
 
         {section === 'becca' ? (

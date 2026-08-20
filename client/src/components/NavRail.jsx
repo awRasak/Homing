@@ -3,7 +3,7 @@ const NAV_ITEMS = [
   { id: 'proposals', icon: '/icons/file-text.png', title: 'Proposals' },
 ];
 
-export default function NavRail({ section, onNavigate, theme, onToggleTheme, onOpenProfile }) {
+export default function NavRail({ section, onNavigate, onOpenProfile }) {
   return (
     <nav className="nav-rail no-print">
       <div className="nav-logo" onClick={() => onNavigate('proposals')} title="Homing">
@@ -27,14 +27,6 @@ export default function NavRail({ section, onNavigate, theme, onToggleTheme, onO
       >
         <img src="/icons/settings.png" alt="" className="nav-item-img" />
       </div>
-      <button
-        type="button"
-        className="theme-toggle"
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        onClick={onToggleTheme}
-      >
-        <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="theme-toggle-img" />
-      </button>
     </nav>
   );
 }
