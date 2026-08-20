@@ -21,6 +21,44 @@ function resolveGroqModel(model) {
   return 'openai/gpt-oss-20b';
 }
 
+const COUNTRY_LOCALES = {
+  nigeria: { hl: 'en-NG', gl: 'NG', ceid: 'NG:en' },
+  usa: { hl: 'en-US', gl: 'US', ceid: 'US:en' },
+  'united states': { hl: 'en-US', gl: 'US', ceid: 'US:en' },
+  america: { hl: 'en-US', gl: 'US', ceid: 'US:en' },
+  uk: { hl: 'en-GB', gl: 'GB', ceid: 'GB:en' },
+  'united kingdom': { hl: 'en-GB', gl: 'GB', ceid: 'GB:en' },
+  britain: { hl: 'en-GB', gl: 'GB', ceid: 'GB:en' },
+  canada: { hl: 'en-CA', gl: 'CA', ceid: 'CA:en' },
+  ghana: { hl: 'en-GH', gl: 'GH', ceid: 'GH:en' },
+  kenya: { hl: 'en-KE', gl: 'KE', ceid: 'KE:en' },
+  'south africa': { hl: 'en-ZA', gl: 'ZA', ceid: 'ZA:en' },
+  australia: { hl: 'en-AU', gl: 'AU', ceid: 'AU:en' },
+  india: { hl: 'en-IN', gl: 'IN', ceid: 'IN:en' },
+  singapore: { hl: 'en-SG', gl: 'SG', ceid: 'SG:en' },
+  germany: { hl: 'de-DE', gl: 'DE', ceid: 'DE:de' },
+  france: { hl: 'fr-FR', gl: 'FR', ceid: 'FR:fr' },
+  spain: { hl: 'es-ES', gl: 'ES', ceid: 'ES:es' },
+  mexico: { hl: 'es-MX', gl: 'MX', ceid: 'MX:es' },
+  brazil: { hl: 'pt-BR', gl: 'BR', ceid: 'BR:pt' },
+  china: { hl: 'zh-CN', gl: 'CN', ceid: 'CN:zh' },
+  japan: { hl: 'ja-JP', gl: 'JP', ceid: 'JP:ja' },
+  italy: { hl: 'it-IT', gl: 'IT', ceid: 'IT:it' },
+  netherlands: { hl: 'nl-NL', gl: 'NL', ceid: 'NL:nl' },
+};
+
+function resolveNewsLocale(region) {
+  const key = String(region || '').trim().toLowerCase();
+  const locale = COUNTRY_LOCALES[key];
+  if (locale) return locale;
+  const matches = key.split(/[\s,]+/).map(w => w.toLowerCase()).filter(Boolean);
+  for (const m of matches) {
+    const hit = COUNTRY_LOCALES[m];
+    if (hit) return hit;
+  }
+  return { hl: 'en-US', gl: 'US', ceid: 'US:en' };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -307,6 +345,11 @@ router.post('/chat/message', async (req, res) => {
     const memory = db.prepare('SELECT content FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC LIMIT 20').all(ws);
     const recentChat = db.prepare('SELECT role, content FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at DESC LIMIT 10').all(ws).reverse();
 
+    const settingsRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
+    let dailySettings = {};
+    try { dailySettings = settingsRow ? JSON.parse(settingsRow.value) : {}; } catch {}
+    const region = dailySettings.country || profile?.location || '';
+
     const topicList = topics.map(t => `- ${t.name}${t.context ? ': ' + t.context : ''}`).join('\n');
     const memoryList = memory.map(m => `- ${m.content}`).join('\n');
     const chatContext = recentChat.map(m => `${m.role}: ${m.content}`).join('\n');
@@ -315,6 +358,7 @@ router.post('/chat/message', async (req, res) => {
     const systemPrompt = `You are Homin, a personal intelligence assistant. You help with research, content creation, and task management.
 
 Current user profile: ${profile ? `${profile.name || 'Unknown'}, ${profile.role || ''}, ${profile.location || ''}` : 'Not set up yet'}
+User's region/country (scope research, news, and recommendations here unless the user asks for elsewhere): ${region || 'unspecified'}
 Tracked topics:
 ${topicList || 'No topics tracked yet'}
 Memory:
@@ -372,7 +416,7 @@ Always reply naturally and helpfully. Be concise.`;
         const parsed = JSON.parse(jsonMatch[0]);
         reply = parsed.reply || text;
         if (parsed.action && parsed.action !== 'CHAT') {
-          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model);
+          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, region);
         }
       }
     } catch {}
@@ -394,7 +438,7 @@ Always reply naturally and helpfully. Be concise.`;
   }
 });
 
-async function executeAction(action, params, ws, model) {
+async function executeAction(action, params, ws, model, region = '') {
   try {
     switch (action) {
       case 'ADD_TOPIC': {
@@ -434,7 +478,10 @@ async function executeAction(action, params, ws, model) {
       case 'SEARCH': {
         const query = (params.query || params.name || '').trim();
         if (!query) return 'Could not search — no query provided.';
-        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+        const regionQuery = (params.region || region || '').trim();
+        const loc = resolveNewsLocale(regionQuery);
+        const scopedQuery = regionQuery ? `${query} ${regionQuery}` : query;
+        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(scopedQuery)}&hl=${loc.hl}&gl=${loc.gl}&ceid=${loc.ceid}`;
         const rssRes = await fetch(rssUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         if (!rssRes.ok) return `Search failed — news feed unavailable (${rssRes.status}).`;
         const xml = await rssRes.text();
@@ -459,7 +506,7 @@ async function executeAction(action, params, ws, model) {
         try {
           const summarized = await callGroq({
             model,
-            system: 'You are a research assistant. Given raw search results, return a concise bullet-point summary of up to 5 findings, each on its own line starting with "- ". Include the source name in brackets and keep it factual. No markdown headers.',
+            system: `You are a research assistant. Given raw search results${regionQuery ? ` scoped to ${regionQuery}` : ''}, return a concise bullet-point summary of up to 5 findings, each on its own line starting with "- ". Include the source name in brackets and keep it factual. No markdown headers.`,
             user: JSON.stringify(items),
             temperature: 0.3,
             maxTokens: 1024,
@@ -484,7 +531,7 @@ async function executeAction(action, params, ws, model) {
 router.get('/settings', (req, res) => {
   const ws = req.query.workspace || 'default';
   const row = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
-  res.json(row ? JSON.parse(row.value) : { dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00' });
+  res.json(row ? JSON.parse(row.value) : { dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00', country: 'Nigeria' });
 });
 
 router.put('/settings', (req, res) => {

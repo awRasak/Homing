@@ -18,6 +18,7 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
   const [tab, setTab] = useState('profile');
   const [quietFrom, setQuietFrom] = useState('22:00');
   const [quietTo, setQuietTo] = useState('07:00');
+  const [country, setCountry] = useState('');
 
   useEffect(() => {
     if (profile) {
@@ -34,12 +35,13 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     if (settings) {
       setQuietFrom(settings.quietFrom || '22:00');
       setQuietTo(settings.quietTo || '07:00');
+      setCountry(settings.country || '');
     }
   }, [settings]);
 
   function handleSave() {
     onSaveProfile({ name, role, location, bio, industries, usecases });
-    onSaveSettings('daily', { ...settings, quietFrom, quietTo });
+    onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
     onClose();
   }
 
@@ -123,6 +125,12 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
 
           {tab === 'settings' && (
             <div className="modal-tab-panel">
+              <div className="pf-group settings-section">
+                <div className="settings-section-title">Search Region</div>
+                <div className="modal-desc" style={{ marginBottom: 10 }}>News, research, and recommendations are scoped to this region by default.</div>
+                <input type="text" className="pf-input" value={country} onChange={e => setCountry(e.target.value)}
+                  placeholder="e.g. Nigeria" />
+              </div>
               <div className="pf-group settings-section">
                 <div className="settings-section-title">Quiet Hours</div>
                 <div className="modal-desc" style={{ marginBottom: 10 }}>Homin won't fire automatic briefings during these hours.</div>
