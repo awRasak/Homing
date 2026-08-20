@@ -81,9 +81,9 @@
   color: var(--green-dark);
 }
 .nav-item.active {
-  background: var(--green);
-  color: var(--green-text);
-  box-shadow: 0 4px 14px rgba(200, 240, 0, 0.3);
+  background: rgba(200, 240, 0, 0.2);
+  color: var(--green-dark);
+  box-shadow: none;
 }
 
 .nav-spacer {
