@@ -56,6 +56,7 @@ export default function App() {
   const [genError, setGenError] = useState('');
   const [tab, setTab] = useState('setup'); // 'setup' | 'generate'
   const [editOpen, setEditOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
   const [allProposals, setAllProposals] = useState([]);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | pending | saving | saved | error
@@ -140,6 +141,7 @@ export default function App() {
   useEffect(() => {
     if (!activeDesignId) return;
     localStorage.setItem(ACTIVE_ID_KEY, activeDesignId);
+    setCurrentPage(1);
     api
       .listProposals(activeDesignId)
       .then((list) => {
@@ -257,7 +259,7 @@ export default function App() {
     setEditOpen(true);
   }
 
-  function handleExtracted({ content, fonts, notes, sourceImage, blocks }) {
+  function handleExtracted({ content, fonts, notes, sourceImage, blocks, pages }) {
     if (!activeDesign) return;
     const patch = {};
     const fillNotes = [...notes];
@@ -289,14 +291,35 @@ export default function App() {
       patch.textOverrides = {};
     }
 
+    if (pages?.length) {
+      patch.pages = pages.map((p) => ({
+        pageNum: p.pageNum,
+        dataUrl: p.dataUrl,
+        width: p.width,
+        height: p.height,
+        blocks: p.blocks,
+      }));
+      patch.pageOverrides = {};
+      setCurrentPage(1);
+    }
+
     patch.extractionNote = fillNotes.join(' ');
     if (Object.keys(patch).length > 0) patchDesign(activeDesign.id, patch);
   }
 
   function handleTextOverride(blockId, text) {
     if (!activeDesign) return;
-    const next = { ...(activeDesign.textOverrides || {}), [blockId]: text };
-    patchDesign(activeDesign.id, { textOverrides: next });
+    const pages = activeDesign.pages || [];
+    if (pages.length > 1) {
+      const pageNum = String(currentPage);
+      const currentOverrides = activeDesign.pageOverrides || {};
+      const pageOverrides = { ...(currentOverrides[pageNum] || {}), [blockId]: text };
+      const next = { ...currentOverrides, [pageNum]: pageOverrides };
+      patchDesign(activeDesign.id, { pageOverrides: next });
+    } else {
+      const next = { ...(activeDesign.textOverrides || {}), [blockId]: text };
+      patchDesign(activeDesign.id, { textOverrides: next });
+    }
   }
 
   function handleAccentPicked(hex) {
@@ -435,7 +458,6 @@ export default function App() {
       <NavRail section={section} onNavigate={setSection} theme={theme} onToggleTheme={toggleTheme} />
 
       <div className="main-area">
-        {section !== 'becca' && (
         <header className="topbar no-print">
           <div className={`topbar-l ${section === 'becca' ? 'clickable' : ''}`}
             onClick={section === 'becca' ? () => setBeccaSection('chat') : undefined}>
@@ -465,7 +487,6 @@ export default function App() {
             </div>
           )}
         </header>
-        )}
 
         {section === 'becca' ? (
           <div className="section-body becca-section">
@@ -532,7 +553,52 @@ export default function App() {
                       <div className="preview-area">
                         <div className="preview-viewport">
                           {activeDesign.sourceImageDataUrl ? (
-                            <LivePreview design={activeDesign} onOverride={handleTextOverride} />
+                            (() => {
+                              const pages = activeDesign.pages || [];
+                              const isMultiPage = pages.length > 1;
+                              const pageData = isMultiPage ? pages[currentPage - 1] : null;
+                              const displayDataUrl = pageData?.dataUrl || activeDesign.sourceImageDataUrl;
+                              const displayWidth = pageData?.width || activeDesign.sourceImageWidth;
+                              const displayHeight = pageData?.height || activeDesign.sourceImageHeight;
+                              const displayBlocks = pageData?.blocks || activeDesign.sourceTextBlocks || [];
+                              const displayOverrides = isMultiPage
+                                ? ((activeDesign.pageOverrides || {})[String(currentPage)] || {})
+                                : (activeDesign.textOverrides || {});
+
+                              return (
+                                <>
+                                  <LivePreview
+                                    sourceImageDataUrl={displayDataUrl}
+                                    sourceImageWidth={displayWidth}
+                                    sourceImageHeight={displayHeight}
+                                    sourceTextBlocks={displayBlocks}
+                                    textOverrides={displayOverrides}
+                                    onOverride={handleTextOverride}
+                                  />
+                                  {isMultiPage && (
+                                    <div className="pagination-controls no-print">
+                                      <button
+                                        type="button"
+                                        className="pagination-btn"
+                                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                        disabled={currentPage <= 1}
+                                      >
+                                        ‹
+                                      </button>
+                                      <span className="pagination-counter">{currentPage} / {pages.length}</span>
+                                      <button
+                                        type="button"
+                                        className="pagination-btn"
+                                        onClick={() => setCurrentPage((p) => Math.min(pages.length, p + 1))}
+                                        disabled={currentPage >= pages.length}
+                                      >
+                                        ›
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()
                           ) : (
                             <PreviewDocument design={activeDesign} proposal={currentProposal} companyName={currentProposal?.companyName} />
                           )}
