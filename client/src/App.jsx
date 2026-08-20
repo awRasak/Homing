@@ -455,7 +455,8 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <NavRail section={section} onNavigate={setSection} theme={theme} onToggleTheme={toggleTheme} />
+      <NavRail section={section} onNavigate={setSection} theme={theme} onToggleTheme={toggleTheme}
+        onOpenProfile={() => { setSection('becca'); setBeccaSettingsOpen(true); }} />
 
       <div className="main-area">
         <header className="topbar no-print">

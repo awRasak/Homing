@@ -3,7 +3,7 @@ const NAV_ITEMS = [
   { id: 'proposals', icon: '📄', title: 'Proposals' },
 ];
 
-export default function NavRail({ section, onNavigate, theme, onToggleTheme }) {
+export default function NavRail({ section, onNavigate, theme, onToggleTheme, onOpenProfile }) {
   return (
     <nav className="nav-rail no-print">
       <div className="nav-logo" onClick={() => onNavigate('proposals')} title="Homing">
@@ -23,7 +23,7 @@ export default function NavRail({ section, onNavigate, theme, onToggleTheme }) {
       <div
         className={section === 'settings' ? 'nav-item active' : 'nav-item'}
         title="Settings"
-        onClick={() => onNavigate('settings')}
+        onClick={onOpenProfile}
       >
         ⚙️
       </div>
