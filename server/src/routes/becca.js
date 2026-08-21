@@ -473,12 +473,14 @@ When the user asks you to do something, you MUST respond with a JSON action bloc
 
 Do NOT skip the JSON block. Do NOT just reply in plain text. Always include the JSON action block first, then the reply field contains your conversational response.
 
+IMPORTANT: When the user says things like "turn this into a blog post", "write this up", "make an article from this", or refers to content you just found via SEARCH, use the PIPELINE action with the topic extracted from that content. Do NOT ask the user to paste content again — use the search results from the conversation above.
+
 Action types and params:
 - SEARCH: { "query": "search terms" }
 - BRIEFING: { "topics": ["topic1", "topic2"] } (or empty array for all)
 - ADD_TOPIC: { "name": "topic name", "context": "optional context" }
 - REMOVE_TOPIC: { "name": "topic name" }
-- PIPELINE: { "topic": "topic name", "tone": "optional tone" }
+- PIPELINE: { "topic": "topic name or short summary of the content to turn into a post", "tone": "optional tone" }
 - REMINDER: { "text": "reminder text", "when": "tomorrow at 3pm" }
 - MEMORY: { "content": "what to remember" }
 - CHAT: {} (no params needed)
@@ -574,6 +576,22 @@ async function executeAction(action, params, ws, model, region = '') {
           newId(), ws, text, params.when || null, params.when || '', 0, 0, nowIso()
         );
         return `Reminder set: "${text}"${params.when ? ' — ' + params.when : ''}`;
+      }
+      case 'PIPELINE': {
+        const topicName = (params.topic || '').trim();
+        if (!topicName) return 'No topic provided for the pipeline.';
+        const port = process.env.PORT || 4000;
+        try {
+          const pipelineRes = await fetch(`http://localhost:${port}/api/becca/pipeline/run`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspace: ws, topicName, tone: params.tone || '', model })
+          });
+          const result = await pipelineRes.json();
+          if (result.error) return `Pipeline failed: ${result.error}`;
+          return `Pipeline complete! Post "${result.title}" created (${result.newsCount} sources, SEO score: ${result.seoScore}). Check your posts dashboard.`;
+        } catch (e) {
+          return `Pipeline failed: ${e.message}`;
+        }
       }
       case 'SEARCH': {
         const query = (params.query || params.name || '').trim();
