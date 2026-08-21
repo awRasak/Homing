@@ -169,29 +169,6 @@ CREATE INDEX IF NOT EXISTS idx_becca_topics_workspace ON becca_topics(workspace)
 `);
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS becca_briefings (
-  id TEXT PRIMARY KEY,
-  workspace TEXT NOT NULL DEFAULT 'default',
-  topic_name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'uncertain',
-  headline TEXT NOT NULL DEFAULT '',
-  what_changed TEXT NOT NULL DEFAULT '',
-  why_it_matters TEXT NOT NULL DEFAULT '',
-  sentiment TEXT NOT NULL DEFAULT 'Neutral',
-  source_note TEXT NOT NULL DEFAULT 'Web search',
-  source_type TEXT NOT NULL DEFAULT 'secondary',
-  diff_old TEXT NOT NULL DEFAULT '',
-  diff_new TEXT NOT NULL DEFAULT '',
-  urls TEXT NOT NULL DEFAULT '[]',
-  note TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_becca_briefings_workspace ON becca_briefings(workspace);
-CREATE INDEX IF NOT EXISTS idx_becca_briefings_topic ON becca_briefings(topic_name);
-`);
-
-db.exec(`
 CREATE TABLE IF NOT EXISTS becca_reminders (
   id TEXT PRIMARY KEY,
   workspace TEXT NOT NULL DEFAULT 'default',
@@ -287,6 +264,64 @@ CREATE TABLE IF NOT EXISTS becca_posts (
 CREATE INDEX IF NOT EXISTS idx_becca_posts_workspace ON becca_posts(workspace);
 CREATE INDEX IF NOT EXISTS idx_becca_posts_status ON becca_posts(status);
 CREATE INDEX IF NOT EXISTS idx_becca_posts_topic ON becca_posts(topic_name);
+`);
+
+// ═══════════════════════════════════════════
+// BECCA — Watchlist v2, Daily Briefs, Blog Drafts
+// ═══════════════════════════════════════════
+
+// Migrate becca_topics: add new columns for watchlist features
+const topicCols = new Set(db.prepare('PRAGMA table_info(becca_topics)').all().map(c => c.name));
+const topicMigrations = [
+  ['normalized_topic', 'TEXT NOT NULL DEFAULT ""'],
+  ['status', "TEXT NOT NULL DEFAULT 'active'"],
+  ['blog_generation_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+  ['last_briefed_at', 'TEXT'],
+  ['last_blog_generated_at', 'TEXT'],
+  ['last_fetch_status', "TEXT NOT NULL DEFAULT 'pending'"],
+  ['last_fetch_error', 'TEXT'],
+  ['consecutive_fetch_failures', 'INTEGER NOT NULL DEFAULT 0'],
+];
+for (const [name, def] of topicMigrations) {
+  if (!topicCols.has(name)) {
+    db.exec(`ALTER TABLE becca_topics ADD COLUMN ${name} ${def}`);
+  }
+}
+// Backfill normalized_topic for existing rows
+db.exec(`UPDATE becca_topics SET normalized_topic = LOWER(TRIM(name)) WHERE normalized_topic = ''`);
+
+// Recreate becca_briefings with new schema (old schema had 0 rows)
+db.exec(`DROP TABLE IF EXISTS becca_briefings`);
+db.exec(`
+CREATE TABLE IF NOT EXISTS becca_briefings (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL DEFAULT 'default',
+  topics_included TEXT NOT NULL DEFAULT '[]',
+  summary TEXT NOT NULL DEFAULT '',
+  topics_skipped TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_becca_briefings_workspace ON becca_briefings(workspace);
+`);
+
+// Blog drafts table
+db.exec(`
+CREATE TABLE IF NOT EXISTS becca_blog_drafts (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL DEFAULT 'default',
+  watchlist_item_id TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  meta_description TEXT NOT NULL DEFAULT '',
+  target_keyword TEXT NOT NULL DEFAULT '',
+  headers TEXT NOT NULL DEFAULT '[]',
+  body TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  word_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_becca_blog_drafts_workspace ON becca_blog_drafts(workspace);
+CREATE INDEX IF NOT EXISTS idx_becca_blog_drafts_topic ON becca_blog_drafts(watchlist_item_id);
+CREATE INDEX IF NOT EXISTS idx_becca_blog_drafts_status ON becca_blog_drafts(status);
 `);
 
 export function nowIso() {

@@ -103,12 +103,10 @@ function PanelSessions({ workspace, activeSession, onSelectSession, onNewSession
 }
 
 /* ── Panel: Watchlist ── */
-function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic }) {
+function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, workspace, beccaModel, onRefresh }) {
   const [newTopic, setNewTopic] = useState('');
   const [newContext, setNewContext] = useState('');
-  const [selected, setSelected] = useState(() => new Set(topics.map(t => t.id)));
-
-  useEffect(() => { setSelected(new Set(topics.map(t => t.id))); }, [topics]);
+  const [briefingTopic, setBriefingTopic] = useState(null);
 
   function handleAdd() {
     if (!newTopic.trim()) return;
@@ -121,9 +119,40 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic }) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd(); }
   }
 
-  function toggleAll() {
-    if (selected.size === topics.length) setSelected(new Set());
-    else setSelected(new Set(topics.map(t => t.id)));
+  async function handleToggleBlog(id) {
+    await api.becca.toggleTopicBlog(id);
+    if (onRefresh) onRefresh();
+  }
+
+  async function handleToggleStatus(id) {
+    await api.becca.toggleTopicStatus(id);
+    if (onRefresh) onRefresh();
+  }
+
+  async function handleBriefNow(topic) {
+    setBriefingTopic(topic.id);
+    try {
+      const res = await api.becca.triggerTopicBrief(topic.id, { workspace, model: beccaModel || 'gpt-oss-20b' });
+      alert(res.summary || 'Briefing complete');
+    } catch (err) {
+      alert('Briefing failed: ' + err.message);
+    }
+    setBriefingTopic(null);
+  }
+
+  const activeTopics = topics.filter(t => t.status === 'active');
+  const pausedTopics = topics.filter(t => t.status === 'paused');
+
+  function relativeTime(iso) {
+    if (!iso) return 'Never';
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
   }
 
   return (
@@ -138,22 +167,11 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic }) {
       </div>
 
       <div className="wp-section wp-topics">
-        <div className="cp-label-row">
-          <span className="cp-label">Watching ({topics.length})</span>
-          <button className="cp-toggle-all" onClick={toggleAll}>
-            {selected.size === topics.length ? 'Deselect all' : 'Select all'}
-          </button>
-        </div>
+        <div className="cp-label">Active ({activeTopics.length})</div>
         <div className="wp-topics-list">
-          {topics.length === 0 && <div className="cp-empty">No topics tracked yet</div>}
-          {topics.map(t => (
+          {activeTopics.length === 0 && <div className="cp-empty">No topics tracked yet</div>}
+          {activeTopics.map(t => (
             <div key={t.id} className="topic-row">
-              <input type="checkbox" className="topic-check" checked={selected.has(t.id)}
-                onChange={() => setSelected(prev => {
-                  const next = new Set(prev);
-                  next.has(t.id) ? next.delete(t.id) : next.add(t.id);
-                  return next;
-                })} />
               <span className={`topic-dot priority-${t.priority || 'medium'}`} />
               <select className="topic-priority" value={t.priority || 'medium'}
                 onChange={e => onUpdateTopic(t.id, { priority: e.target.value })}>
@@ -162,24 +180,60 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic }) {
                 <option value="low">Low</option>
               </select>
               <span className="topic-name">{t.name}</span>
-              <button className="topic-remove" onClick={() => onRemoveTopic(t.id)}>×</button>
+              {t.last_fetch_status === 'failed' && (
+                <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
+              )}
+              <label className="topic-toggle" title="Generate blog content">
+                <input type="checkbox" checked={!!t.blog_generation_enabled}
+                  onChange={() => handleToggleBlog(t.id)} />
+                <span className="topic-toggle-label">Blog</span>
+              </label>
+              <button className="topic-brief-btn" disabled={briefingTopic === t.id}
+                onClick={() => handleBriefNow(t)} title="Brief me now">
+                {briefingTopic === t.id ? '...' : '✦'}
+              </button>
+              <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="wp-bottom">
-        <button className="cp-brief-btn" disabled={topics.length === 0}>✦ Brief all topics</button>
-      </div>
+      {pausedTopics.length > 0 && (
+        <div className="wp-section wp-topics wp-paused">
+          <div className="cp-label">Paused ({pausedTopics.length})</div>
+          <div className="wp-topics-list">
+            {pausedTopics.map(t => (
+              <div key={t.id} className="topic-row topic-paused">
+                <span className="topic-name">{t.name}</span>
+                <button className="topic-resume" onClick={() => handleToggleStatus(t.id)} title="Resume">▶</button>
+                <button className="topic-remove" onClick={() => onRemoveTopic(t.id)} title="Delete">×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ── Panel: Briefings ── */
-function PanelBriefings({ briefings, settings, onSaveSettings }) {
+function PanelBriefings({ briefings, settings, onSaveSettings, workspace }) {
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [expanded, setExpanded] = useState(null);
   const dailyOn = settings?.dailyOn || false;
   const dailyTime = settings?.dailyTime || '07:00';
+
+  function relativeTime(iso) {
+    if (!iso) return '';
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  }
 
   return (
     <div className="briefings-panel">
@@ -208,23 +262,23 @@ function PanelBriefings({ briefings, settings, onSaveSettings }) {
       <div className="bp-section">
         <div className="cp-label">Past Briefings</div>
         {!briefings || briefings.length === 0 ? (
-          <div className="cp-empty">No briefings yet</div>
+          <div className="cp-empty">No briefings yet. Add topics and wait for the daily brief, or say "brief me now" in chat.</div>
         ) : (
           <div className="bp-list">
             {briefings.map(b => (
-              <div key={b.id} className="bp-card">
+              <div key={b.id} className={`bp-card ${expanded === b.id ? 'expanded' : ''}`}
+                onClick={() => setExpanded(expanded === b.id ? null : b.id)}>
                 <div className="bp-card-head">
-                  <span className="bp-card-topic">{b.topic_name || 'General'}</span>
-                  <span className={`bp-sentiment ${b.sentiment || 'neutral'}`}>
-                    {b.sentiment || 'neutral'}
-                  </span>
+                  <span className="bp-card-time">{relativeTime(b.created_at)}</span>
+                  {b.topics_skipped && b.topics_skipped.length > 0 && (
+                    <span className="bp-skipped-note">{b.topics_skipped.length} topic{b.topics_skipped.length > 1 ? 's' : ''} had no updates</span>
+                  )}
                 </div>
-                <div className="bp-card-title">{b.headline || 'Briefing'}</div>
-                {b.changed_since_last && <div className="bp-card-changed">Changed: {b.changed_since_last}</div>}
-                <div className="bp-card-meta">
-                  {b.status && <span className={`bp-status ${b.status}`}>{b.status}</span>}
-                  {b.created_at && <span className="bp-time">{new Date(b.created_at).toLocaleDateString()}</span>}
-                </div>
+                {expanded === b.id ? (
+                  <div className="bp-card-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(b.summary || '') }} />
+                ) : (
+                  <div className="bp-card-preview">{(b.summary || '').slice(0, 120)}...</div>
+                )}
               </div>
             ))}
           </div>
@@ -429,7 +483,7 @@ export default function BeccaLayout({
   topics, profile, memory, briefings, reminders, settings,
   onAddTopic, onRemoveTopic, onUpdateTopic,
   onSaveSettings, onAddReminder, onDismissReminder,
-  workspace, beccaSection, onSectionChange, beccaModel, onModelChange,
+  workspace, beccaSection, onSectionChange, beccaModel, onModelChange, onActionExecuted,
 }) {
   const [activeSession, setActiveSession] = useState(null);
   const [panelWidth, setPanelWidth] = useState(320);
@@ -485,11 +539,12 @@ export default function BeccaLayout({
           )}
           {activeTab === 'watchlist' && (
             <PanelWatchlist topics={topics} onAddTopic={onAddTopic}
-              onRemoveTopic={onRemoveTopic} onUpdateTopic={onUpdateTopic} />
+              onRemoveTopic={onRemoveTopic} onUpdateTopic={onUpdateTopic}
+              workspace={workspace} beccaModel={beccaModel} onRefresh={onActionExecuted} />
           )}
           {activeTab === 'briefings' && (
             <PanelBriefings briefings={briefings} settings={settings}
-              onSaveSettings={onSaveSettings} />
+              onSaveSettings={onSaveSettings} workspace={workspace} />
           )}
           {activeTab === 'pipeline' && (
             <PanelPipeline topics={topics} workspace={workspace} onOpenPost={setOpenDraft} refreshKey={draftMoveNonce} />
@@ -510,7 +565,7 @@ export default function BeccaLayout({
         <div className="al-chat">
           <BeccaChat topics={topics} profile={profile} memory={memory}
             workspace={workspace} activeSession={activeSession}
-            onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} />
+            onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} onActionExecuted={onActionExecuted} />
         </div>
       </div>
     </div>

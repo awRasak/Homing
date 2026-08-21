@@ -36,6 +36,7 @@ export const api = {
 
   listProposals: (designId) => fetch(`${BASE}/designs/${designId}/proposals`).then(handle),
   listAllProposals: () => fetch(`${BASE}/proposals`).then(handle),
+  getProposalStats: () => fetch(`${BASE}/proposals/stats`).then(handle),
   getProposal: (designId, proposalId) =>
     fetch(`${BASE}/designs/${designId}/proposals/${proposalId}`).then(handle),
 
@@ -184,19 +185,26 @@ export const api = {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
       }).then(handle),
     deleteTopic: (id) => fetch(`${BASE}/becca/topics/${id}`, { method: 'DELETE' }).then(handle),
+    toggleTopicBlog: (id) => fetch(`${BASE}/becca/topics/${id}/toggle-blog`, { method: 'PUT' }).then(handle),
+    toggleTopicStatus: (id) => fetch(`${BASE}/becca/topics/${id}/toggle-status`, { method: 'PUT' }).then(handle),
+    triggerTopicBrief: (id, data = {}) =>
+      fetch(`${BASE}/becca/topics/${id}/trigger-brief`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+      }).then(handle),
 
     listBriefings: (workspace = 'default', limit = 50) =>
       fetch(`${BASE}/becca/briefings?workspace=${workspace}&limit=${limit}`).then(handle),
-    getTopicBriefings: (topic, workspace = 'default') =>
-      fetch(`${BASE}/becca/briefings/${encodeURIComponent(topic)}?workspace=${workspace}`).then(handle),
-    saveBriefing: (data) =>
-      fetch(`${BASE}/becca/briefings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+
+    listBlogDrafts: (workspace = 'default', status) => {
+      let qs = `workspace=${workspace}`;
+      if (status) qs += `&status=${status}`;
+      return fetch(`${BASE}/becca/blog-drafts?${qs}`).then(handle);
+    },
+    updateBlogDraft: (id, data) =>
+      fetch(`${BASE}/becca/blog-drafts/${id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
       }).then(handle),
-    updateBriefingNote: (id, note) =>
-      fetch(`${BASE}/becca/briefings/${id}/note`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),
-      }).then(handle),
+    deleteBlogDraft: (id) => fetch(`${BASE}/becca/blog-drafts/${id}`, { method: 'DELETE' }).then(handle),
 
     listReminders: (workspace = 'default') =>
       fetch(`${BASE}/becca/reminders?workspace=${workspace}`).then(handle),

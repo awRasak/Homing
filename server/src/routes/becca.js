@@ -63,6 +63,38 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function stripThink(s) {
+  let out = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  out = out.replace(/<think>[\s\S]*$/gi, '');
+  return out.trim();
+}
+
+async function fetchTopicNews(topicName, region = '', maxItems = 5) {
+  const loc = resolveNewsLocale(region);
+  const scopedQuery = region ? `${topicName} ${region}` : topicName;
+  const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(scopedQuery)}&hl=${loc.hl}&gl=${loc.gl}&ceid=${loc.ceid}`;
+  const rssRes = await fetch(rssUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!rssRes.ok) throw new Error(`News feed unavailable (${rssRes.status})`);
+  const xml = await rssRes.text();
+  const items = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = itemRegex.exec(xml)) && items.length < maxItems) {
+    const block = m[1];
+    const grab = (tag) => {
+      const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+      if (!match) return '';
+      return match[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").trim();
+    };
+    const title = grab('title');
+    const sourceMatch = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
+    const source = sourceMatch ? sourceMatch[1].trim() : 'News';
+    const link = grab('link') || grab('guid');
+    items.push({ title, source, url: link });
+  }
+  return items;
+}
+
 async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 4096 }, retriesLeft = 2) {
   const key = process.env.GROQ_API_KEY || '';
   if (!key) throw new Error('GROQ_API_KEY is not configured');
@@ -146,7 +178,13 @@ router.put('/profile', (req, res) => {
 // ═══════════════════════════════════════════
 router.get('/topics', (req, res) => {
   const ws = req.query.workspace || 'default';
-  const rows = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? ORDER BY sort_order ASC, created_at ASC').all(ws);
+  const status = req.query.status; // optional: 'active', 'paused', or undefined for all
+  let rows;
+  if (status) {
+    rows = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY sort_order ASC, created_at ASC').all(ws, status);
+  } else {
+    rows = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? ORDER BY sort_order ASC, created_at ASC').all(ws);
+  }
   res.json(rows);
 });
 
@@ -155,14 +193,14 @@ router.post('/topics', (req, res) => {
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Topic name required' });
 
-  const existing = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(name) = LOWER(?)').get(ws, name);
+  const existing = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(normalized_topic) = LOWER(?) AND status = ?').get(ws, name, 'active');
   if (existing) return res.status(409).json({ error: 'Topic already exists' });
 
   const id = newId();
   const now = nowIso();
   const maxOrder = db.prepare('SELECT MAX(sort_order) as mx FROM becca_topics WHERE workspace = ?').get(ws);
-  db.prepare('INSERT INTO becca_topics (id, workspace, name, context, priority, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)').run(
-    id, ws, name, req.body.context || '', req.body.priority || 'medium', (maxOrder?.mx || 0) + 1, now, now
+  db.prepare('INSERT INTO becca_topics (id, workspace, name, normalized_topic, context, priority, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)').run(
+    id, ws, name, name.toLowerCase().trim(), req.body.context || '', req.body.priority || 'medium', (maxOrder?.mx || 0) + 1, now, now
   );
   res.json({ id, ok: true });
 });
@@ -184,8 +222,62 @@ router.put('/topics/:id', (req, res) => {
 });
 
 router.delete('/topics/:id', (req, res) => {
-  db.prepare('DELETE FROM becca_topics WHERE id = ?').run(req.params.id);
+  db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run('paused', nowIso(), req.params.id);
   res.json({ ok: true });
+});
+
+// Toggle blog generation for a topic
+router.put('/topics/:id/toggle-blog', (req, res) => {
+  const topic = db.prepare('SELECT id, blog_generation_enabled FROM becca_topics WHERE id = ?').get(req.params.id);
+  if (!topic) return res.status(404).json({ error: 'Topic not found' });
+  const newVal = topic.blog_generation_enabled ? 0 : 1;
+  db.prepare('UPDATE becca_topics SET blog_generation_enabled = ?, updated_at = ? WHERE id = ?').run(newVal, nowIso(), req.params.id);
+  res.json({ ok: true, blog_generation_enabled: newVal });
+});
+
+// Pause/resume a topic
+router.put('/topics/:id/toggle-status', (req, res) => {
+  const topic = db.prepare('SELECT id, status FROM becca_topics WHERE id = ?').get(req.params.id);
+  if (!topic) return res.status(404).json({ error: 'Topic not found' });
+  const newStatus = topic.status === 'active' ? 'paused' : 'active';
+  db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run(newStatus, nowIso(), req.params.id);
+  res.json({ ok: true, status: newStatus });
+});
+
+// Manual brief trigger for a single topic
+router.post('/topics/:id/trigger-brief', async (req, res) => {
+  const ws = req.body.workspace || 'default';
+  const model = req.body.model || 'gpt-oss-20b';
+  const region = req.body.region || '';
+  const topic = db.prepare('SELECT * FROM becca_topics WHERE id = ? AND workspace = ?').get(req.params.id, ws);
+  if (!topic) return res.status(404).json({ error: 'Topic not found' });
+  try {
+    const items = await fetchTopicNews(topic.name, region, 5);
+    if (items.length === 0) return res.json({ ok: true, summary: 'No recent news found for this topic.', items: [] });
+    let summary = '';
+    try {
+      summary = await callGroq({
+        model,
+        system: `You are a news analyst. Given search results for a topic, write a concise 2-4 sentence briefing. Be factual. No markdown headers.`,
+        user: `Topic: ${topic.name}\n${items.map(i => `- ${i.title} [${i.source}]`).join('\n')}`,
+        temperature: 0.3,
+        maxTokens: 512,
+      });
+      summary = stripThink(summary).trim();
+    } catch {
+      summary = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
+    }
+    db.prepare('UPDATE becca_topics SET last_fetch_status = ?, consecutive_fetch_failures = 0, last_briefed_at = ? WHERE id = ?').run('success', nowIso(), topic.id);
+    // Save as a briefing
+    const briefingId = newId();
+    db.prepare('INSERT INTO becca_briefings (id, workspace, topics_included, summary, topics_skipped, created_at) VALUES (?,?,?,?,?,?)').run(
+      briefingId, ws, JSON.stringify([topic.id]), summary, '[]', nowIso()
+    );
+    res.json({ ok: true, summary, itemCount: items.length });
+  } catch (err) {
+    db.prepare('UPDATE becca_topics SET last_fetch_status = ?, last_fetch_error = ?, consecutive_fetch_failures = consecutive_fetch_failures + 1 WHERE id = ?').run('failed', err.message, topic.id);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ═══════════════════════════════════════════
@@ -195,31 +287,41 @@ router.get('/briefings', (req, res) => {
   const ws = req.query.workspace || 'default';
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
   const rows = db.prepare('SELECT * FROM becca_briefings WHERE workspace = ? ORDER BY created_at DESC LIMIT ?').all(ws, limit);
-  res.json(rows.map(r => ({ ...r, urls: JSON.parse(r.urls || '[]') })));
+  res.json(rows.map(r => ({
+    ...r,
+    topics_included: JSON.parse(r.topics_included || '[]'),
+    topics_skipped: JSON.parse(r.topics_skipped || '[]'),
+  })));
 });
 
-router.get('/briefings/:topic', (req, res) => {
+// ═══════════════════════════════════════════
+// BLOG DRAFTS
+// ═══════════════════════════════════════════
+router.get('/blog-drafts', (req, res) => {
   const ws = req.query.workspace || 'default';
-  const rows = db.prepare('SELECT * FROM becca_briefings WHERE workspace = ? AND topic_name = ? ORDER BY created_at DESC LIMIT 20').all(ws, req.params.topic);
-  res.json(rows.map(r => ({ ...r, urls: JSON.parse(r.urls || '[]') })));
+  const status = req.query.status;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  let rows;
+  if (status) {
+    rows = db.prepare('SELECT * FROM becca_blog_drafts WHERE workspace = ? AND status = ? ORDER BY created_at DESC LIMIT ?').all(ws, status, limit);
+  } else {
+    rows = db.prepare('SELECT * FROM becca_blog_drafts WHERE workspace = ? ORDER BY created_at DESC LIMIT ?').all(ws, limit);
+  }
+  res.json(rows.map(r => ({ ...r, headers: JSON.parse(r.headers || '[]') })));
 });
 
-router.post('/briefings', (req, res) => {
-  const ws = req.body.workspace || 'default';
-  const id = newId();
-  const now = nowIso();
-  db.prepare(`INSERT INTO becca_briefings (id, workspace, topic_name, status, headline, what_changed, why_it_matters, sentiment, source_note, source_type, diff_old, diff_new, urls, note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    id, ws, req.body.topic_name || '', req.body.status || 'uncertain',
-    req.body.headline || '', req.body.what_changed || '', req.body.why_it_matters || '',
-    req.body.sentiment || 'Neutral', req.body.source_note || 'Web search', req.body.source_type || 'secondary',
-    req.body.diff_old || '', req.body.diff_new || '',
-    JSON.stringify(req.body.urls || []), req.body.note || '', now
-  );
-  res.json({ id, ok: true });
+router.put('/blog-drafts/:id', (req, res) => {
+  const sets = [];
+  const vals = [];
+  if (req.body.status !== undefined) { sets.push('status = ?'); vals.push(req.body.status); }
+  if (sets.length === 0) return res.json({ ok: true });
+  vals.push(req.params.id);
+  db.prepare(`UPDATE becca_blog_drafts SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  res.json({ ok: true });
 });
 
-router.put('/briefings/:id/note', (req, res) => {
-  db.prepare('UPDATE becca_briefings SET note = ? WHERE id = ?').run(req.body.note || '', req.params.id);
+router.delete('/blog-drafts/:id', (req, res) => {
+  db.prepare('DELETE FROM becca_blog_drafts WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -503,14 +605,6 @@ Always reply naturally and helpfully. Be concise.`;
 
     const rawResponse = response;
 
-    // Strip <think>...</think> tags for display only (handle unclosed tags)
-    const stripThink = (s) => {
-      // Remove closed think blocks
-      let out = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
-      // For unclosed <think>, remove the block and its content (to end of string)
-      out = out.replace(/<think>[\s\S]*$/gi, '');
-      return out.trim();
-    };
     const text = stripThink(rawResponse);
 
     // Parse action from RAW response (JSON may follow unclosed think block)
@@ -716,21 +810,21 @@ async function executeAction(action, params, ws, model, region = '') {
       case 'ADD_TOPIC': {
         const name = (params.name || '').trim();
         if (!name) return 'Could not add topic — no name provided.';
-        const existing = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(name) = LOWER(?)').get(ws, name);
+        const existing = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(normalized_topic) = LOWER(?) AND status = ?').get(ws, name, 'active');
         if (existing) return `Topic "${name}" is already on your watchlist.`;
         const id = newId();
         const now = nowIso();
         const maxOrder = db.prepare('SELECT MAX(sort_order) as mx FROM becca_topics WHERE workspace = ?').get(ws);
-        db.prepare('INSERT INTO becca_topics (id, workspace, name, context, priority, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)').run(
-          id, ws, name, params.context || '', 'medium', (maxOrder?.mx || 0) + 1, now, now
+        db.prepare(`INSERT INTO becca_topics (id, workspace, name, normalized_topic, context, priority, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(
+          id, ws, name, name.toLowerCase().trim(), params.context || '', 'medium', (maxOrder?.mx || 0) + 1, now, now
         );
         return `Added "${name}" to your watchlist.`;
       }
       case 'REMOVE_TOPIC': {
         const name = (params.name || '').trim();
-        const topic = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(name) = LOWER(?)').get(ws, name);
+        const topic = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(normalized_topic) = LOWER(?) AND status = ?').get(ws, name, 'active');
         if (!topic) return `Topic "${name}" not found on your watchlist.`;
-        db.prepare('DELETE FROM becca_topics WHERE id = ?').run(topic.id);
+        db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run('paused', nowIso(), topic.id);
         return `Removed "${name}" from your watchlist.`;
       }
       case 'MEMORY': {
@@ -770,27 +864,11 @@ async function executeAction(action, params, ws, model, region = '') {
         query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+(?:this|that|it|the)?\s*(?:into|to|as)?\s*(?:a\s+)?(?:blog\s*post|article|post|draft|content|pipeline).*$/i, '').trim();
         query = query.replace(/\s*[-–—]\s*(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
         const regionQuery = (params.region || region || '').trim();
-        const loc = resolveNewsLocale(regionQuery);
-        const scopedQuery = regionQuery ? `${query} ${regionQuery}` : query;
-        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(scopedQuery)}&hl=${loc.hl}&gl=${loc.gl}&ceid=${loc.ceid}`;
-        const rssRes = await fetch(rssUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-        if (!rssRes.ok) return `Search failed — news feed unavailable (${rssRes.status}).`;
-        const xml = await rssRes.text();
-        const items = [];
-        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-        let m;
-        while ((m = itemRegex.exec(xml)) && items.length < 5) {
-          const block = m[1];
-          const grab = (tag) => {
-            const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
-            if (!match) return '';
-            return match[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").trim();
-          };
-          const title = grab('title');
-          const sourceMatch = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
-          const source = sourceMatch ? sourceMatch[1].trim() : 'News';
-          const link = grab('link') || grab('guid');
-          items.push({ title, source, url: link });
+        let items;
+        try {
+          items = await fetchTopicNews(query, regionQuery, 5);
+        } catch (err) {
+          return `Search failed — ${err.message}.`;
         }
         if (items.length === 0) return `No results found for "${query}".`;
         let formatted = '';
@@ -802,8 +880,7 @@ async function executeAction(action, params, ws, model, region = '') {
             temperature: 0.3,
             maxTokens: 1024,
           });
-          formatted = summarized.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-          // If model emitted unclosed <think>, the output is unreliable — fall back to raw items
+          formatted = stripThink(summarized);
           if (/<think/i.test(formatted) || !formatted) {
             formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
           }
@@ -811,6 +888,59 @@ async function executeAction(action, params, ws, model, region = '') {
           formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
         }
         return formatted;
+      }
+      case 'BRIEFING': {
+        // Fetch + summarize all active topics for this workspace
+        const topics = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY sort_order ASC').all(ws, 'active');
+        if (topics.length === 0) return 'No active topics to brief on. Add some topics to your watchlist first.';
+        const included = [];
+        const skipped = [];
+        for (const t of topics) {
+          try {
+            const items = await fetchTopicNews(t.name, region, 3);
+            if (items.length === 0) {
+              skipped.push({ id: t.id, name: t.name, reason: 'no_new_info' });
+              continue;
+            }
+            included.push({ ...t, items });
+            db.prepare('UPDATE becca_topics SET last_fetch_status = ?, consecutive_fetch_failures = 0, last_briefed_at = ? WHERE id = ?').run('success', nowIso(), t.id);
+          } catch (err) {
+            skipped.push({ id: t.id, name: t.name, reason: 'fetch_failed' });
+            db.prepare('UPDATE becca_topics SET last_fetch_status = ?, last_fetch_error = ?, consecutive_fetch_failures = consecutive_fetch_failures + 1 WHERE id = ?').run('failed', err.message, t.id);
+          }
+        }
+        if (included.length === 0) return 'Could not fetch updates for any topics. All fetches failed or returned no new info.';
+        // Summarize combined brief
+        const briefInput = included.map(t => `TOPIC: ${t.name}\n${t.items.map(i => `- ${i.title} [${i.source}]`).join('\n')}`).join('\n\n');
+        let summary = '';
+        try {
+          summary = await callGroq({
+            model,
+            system: `You are a news analyst. Given search results for multiple topics, write ONE combined daily briefing. Use each topic name as a bold sub-heading, then 2-4 sentence summary per topic. Be factual and concise. No markdown headers (#), just bold text for topic names. If a topic has little news, say so briefly.`,
+            user: briefInput,
+            temperature: 0.3,
+            maxTokens: 2048,
+          });
+          summary = stripThink(summary).trim();
+        } catch {
+          summary = included.map(t => `**${t.name}**\n${t.items.map(i => `- ${i.title} [${i.source}]`).join('\n')}`).join('\n\n');
+        }
+        // Save briefing
+        const briefingId = newId();
+        db.prepare('INSERT INTO becca_briefings (id, workspace, topics_included, summary, topics_skipped, created_at) VALUES (?,?,?,?,?,?)').run(
+          briefingId, ws, JSON.stringify(included.map(t => t.id)), summary, JSON.stringify(skipped), nowIso()
+        );
+        // Check for 5+ consecutive failures → auto-pause
+        for (const s of skipped) {
+          if (s.reason === 'fetch_failed') {
+            const topic = db.prepare('SELECT consecutive_fetch_failures FROM becca_topics WHERE id = ?').get(s.id);
+            if (topic && topic.consecutive_fetch_failures >= 5) {
+              db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run('paused', nowIso(), s.id);
+              skipped.push({ ...s, paused: true });
+            }
+          }
+        }
+        return summary;
       }
       default:
         return null;

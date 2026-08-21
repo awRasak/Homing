@@ -385,43 +385,6 @@ export default function App() {
   }
 
   async function handleExport() {
-    if (activeDesign?.sourceImageDataUrl) {
-      try {
-        const { buildEditedPdf } = await import('./lib/buildEditedPdf');
-        const pages = activeDesign.pages?.length
-          ? activeDesign.pages.map((p) => ({
-              pageNum: p.pageNum,
-              dataUrl: p.dataUrl,
-              width: p.width,
-              height: p.height,
-              blocks: p.blocks || [],
-            }))
-          : [{
-              pageNum: 1,
-              dataUrl: activeDesign.sourceImageDataUrl,
-              width: activeDesign.sourceImageWidth,
-              height: activeDesign.sourceImageHeight,
-              blocks: activeDesign.sourceTextBlocks || [],
-            }];
-        const overridesByPage = activeDesign.pages?.length
-          ? Object.fromEntries(Object.entries(activeDesign.pageOverrides || {}))
-          : { 1: activeDesign.textOverrides || {} };
-        const bytes = await buildEditedPdf(pages, overridesByPage);
-        const blob = new Blob([bytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${activeDesign.name || 'design'}-edited.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        return;
-      } catch (err) {
-        console.error('Edited PDF export failed', err);
-      }
-    }
-
     if (currentProposal?.id) {
       try {
         await api.downloadPDF(currentProposal.id);
@@ -599,7 +562,12 @@ export default function App() {
               onUpdateTopic={handleBeccaUpdateTopic} onSaveSettings={handleBeccaSaveSettings}
               onAddReminder={handleBeccaAddReminder} onDismissReminder={handleBeccaDismissReminder}
               workspace={BECCA_WORKSPACE} beccaSection={beccaSection} onSectionChange={setBeccaSection}
-              beccaModel={beccaModel} onModelChange={(m) => { setBeccaModel(m); localStorage.setItem('homin:model', m); }} />
+              beccaModel={beccaModel} onModelChange={(m) => { setBeccaModel(m); localStorage.setItem('homin:model', m); }}
+              onActionExecuted={() => {
+                api.becca.listTopics(BECCA_WORKSPACE).then(setBeccaTopics).catch(() => {});
+                api.becca.listReminders(BECCA_WORKSPACE).then(setBeccaReminders).catch(() => {});
+                api.becca.listBriefings(BECCA_WORKSPACE).then(setBeccaBriefings).catch(() => {});
+              }} />
             {beccaSettingsOpen && (
               <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
                 onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}

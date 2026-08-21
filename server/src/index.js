@@ -11,6 +11,7 @@ import campaignsRouter from './routes/campaigns.js';
 import trackingRouter from './routes/tracking.js';
 import beccaRouter from './routes/becca.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
+import { startScheduler } from './scheduler.js';
 import './db.js';
 
 const app = express();
@@ -38,4 +39,5 @@ app.use('/api/becca', beccaRouter);
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Homing server listening on http://localhost:${port}`);
+  startScheduler();
 });
