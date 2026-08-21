@@ -494,16 +494,52 @@ Always reply naturally and helpfully. Be concise.`;
       maxTokens: 2048,
     });
 
-    const text = response;
+    const rawResponse = response;
 
-    // Parse action from response
+    // Strip <think>...</think> tags for display only (handle unclosed tags)
+    const stripThink = (s) => {
+      // Remove closed think blocks
+      let out = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
+      // For unclosed <think>, remove the block and its content (to end of string)
+      out = out.replace(/<think>[\s\S]*$/gi, '');
+      return out.trim();
+    };
+    const text = stripThink(rawResponse);
+
+    // Parse action from RAW response (JSON may follow unclosed think block)
     let actionResult = null;
     let reply = text;
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        reply = parsed.reply || text;
+      let jsonStr = null;
+      // First try: JSON in a code block
+      const codeBlock = rawResponse.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+      if (codeBlock) {
+        try { JSON.parse(codeBlock[1]); jsonStr = codeBlock[1]; } catch {}
+      }
+      // Second try: find balanced JSON objects that contain "action"
+      if (!jsonStr) {
+        let pos = 0;
+        while (pos < rawResponse.length) {
+          const idx = rawResponse.indexOf('{', pos);
+          if (idx === -1) break;
+          let depth = 0; let end = -1;
+          for (let i = idx; i < rawResponse.length; i++) {
+            if (rawResponse[i] === '{') depth++;
+            else if (rawResponse[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+          }
+          if (end > idx) {
+            const candidate = rawResponse.slice(idx, end + 1);
+            try {
+              const parsed = JSON.parse(candidate);
+              if (parsed && parsed.action) { jsonStr = candidate; break; }
+            } catch {}
+            pos = end + 1;
+          } else break;
+        }
+      }
+      if (jsonStr) {
+        const parsed = JSON.parse(jsonStr);
+        reply = stripThink(parsed.reply || text);
         if (parsed.action && parsed.action !== 'CHAT') {
           actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, region);
         }
@@ -517,14 +553,36 @@ Always reply naturally and helpfully. Be concise.`;
       if (addMatch) {
         let topicName = addMatch[1].replace(/[.!?]+$/, '').trim();
         actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
-        reply = text + '\n\n' + actionResult;
+        reply = actionResult;
+      }
+    }
+    if (!actionResult) {
+      const lower = message.toLowerCase();
+      const searchMatch = lower.match(/(?:search|look up|find|google|research|check)\s+(?:for\s+)?(.+)/i);
+      if (searchMatch) {
+        const query = searchMatch[1].replace(/[.!?]+$/, '').trim();
+        actionResult = await executeAction('SEARCH', { query }, ws, model, region);
+        reply = actionResult;
+      }
+    }
+    if (!actionResult) {
+      const lower = message.toLowerCase();
+      const pipelineMatch = lower.match(/(?:turn|make|write|create|convert)\s+(?:this|that|it|the(?:se)?\s+results?)\s+(?:into|as|to)\s+(?:a\s+)?(?:blog\s*post|article|post|draft|content)/i);
+      if (pipelineMatch) {
+        const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
+        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, region);
+        reply = actionResult;
       }
     }
 
     // Append action result to reply if any
     if (actionResult && !reply.includes(actionResult)) {
+      actionResult = actionResult.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>/gi, '').trim();
       reply += '\n\n' + actionResult;
     }
+
+    // Strip <think>...</think> tags from final reply (handle unclosed tags)
+    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>/gi, '').trim();
 
     // Save assistant response
     const assistantId = newId();
@@ -627,7 +685,11 @@ async function executeAction(action, params, ws, model, region = '') {
             temperature: 0.3,
             maxTokens: 1024,
           });
-          formatted = summarized.trim();
+          formatted = summarized.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+          // If model emitted unclosed <think>, the output is unreliable — fall back to raw items
+          if (/<think/i.test(formatted) || !formatted) {
+            formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
+          }
         } catch {
           formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
         }
