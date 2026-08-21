@@ -554,7 +554,7 @@ Always reply naturally and helpfully. Be concise.`;
     // Fallback: if AI didn't emit a JSON action, detect intent from user message
     if (!actionResult) {
       const lower = message.toLowerCase();
-      const addMatch = lower.match(/(?:keep tabs on|track|monitor|add to (?:my )?watchlist|follow|watch)\s+(.+)/i);
+      const addMatch = lower.match(/(?:keep tabs on|keep an eye on|track|monitor|add to (?:my )?watchlist|follow|watch)\s+(.+)/i);
       if (addMatch) {
         let topicName = addMatch[1].replace(/[.!?]+$/, '').trim();
         actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
@@ -584,6 +584,23 @@ Always reply naturally and helpfully. Be concise.`;
     if (!actionResult) {
       const replyLower = (reply || '').toLowerCase();
       const msgLower = message.toLowerCase();
+
+      // Detect ADD_TOPIC intent from reply text (AI often claims it added but didn't emit JSON)
+      const replyAddMatch = replyLower.match(/(?:added|adding)\s+(?:a\s+)?(?:watch|topic|track(?:ing)?)\s+(?:on|for)\s+(.+?)(?:\.|,|\s+to your|\s+i'll|\s+covering)/i)
+        || replyLower.match(/(?:added|adding)\s+["""]?(.+?)["""]?\s+to\s+(?:your\s+)?(?:watchlist|track(?:ing)?)/i)
+        || replyLower.match(/(?:i(?:'ve| have))\s+(?:added|added|set up|started)\s+(?:a\s+)?(?:watch|track(?:ing)?|monitor(?:ing)?)\s+(?:on|for)\s+(.+?)(?:\.|,|\s+to your|\s+i'll)/i);
+      const msgAddMatch = msgLower.match(/(?:keep tabs on|keep an eye on|track|monitor|add to (?:my |your )?watchlist|follow|watch|watching)\s+(.+)/i);
+
+      if (replyAddMatch || msgAddMatch) {
+        let topicName = (replyAddMatch?.[1] || msgAddMatch?.[1] || '').replace(/[.!?]+$/, '').replace(/["""]/g, '').trim();
+        // Clean up common trailing phrases
+        topicName = topicName.replace(/\s+(?:covering|including|and related|related).+$/i, '').trim();
+        if (topicName) {
+          actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
+          reply = actionResult;
+        }
+      }
+
       // Detect SEARCH intent from model's reply or user message
       const wantsSearch = /(?:search|look\s*up|find|google|research|check)\s+(?:for\s+)?/i.test(replyLower)
         || /(?:search|look\s*up|find|google|research|check)\s+(?:for\s+)?/i.test(msgLower);
