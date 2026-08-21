@@ -462,14 +462,19 @@ You have these capabilities:
 - MEMORY: Remember something important
 - CHAT: Just have a conversation
 
-When the user asks you to do something, you MUST respond with a JSON action block. Format your ENTIRE response as:
+CRITICAL RULES:
+1. ALWAYS respond with a JSON action block. NEVER respond with just plain text.
+2. NEVER say "I'll search", "I'll look up", "I'll find" without actually emitting a SEARCH action.
+3. NEVER say "I'll turn this into a blog post" without actually emitting a PIPELINE action.
+4. Your reply field is shown to the user AFTER the action completes. Write it as if the action already happened.
+5. If the user asks you to do something, you MUST emit the corresponding JSON action. Talking about doing it is NOT the same as doing it.
+
+Format your ENTIRE response as:
 {
   "action": "ACTION_TYPE",
   "params": { ... },
   "reply": "Your natural language response to the user"
 }
-
-Do NOT skip the JSON block. Do NOT just reply in plain text. Always include the JSON action block first, then the reply field contains your conversational response.
 
 IMPORTANT: When the user says things like "turn this into a blog post", "write this up", "make an article from this", or refers to content you just found via SEARCH, use the PIPELINE action with the topic extracted from that content. Do NOT ask the user to paste content again — use the search results from the conversation above.
 
@@ -575,6 +580,39 @@ Always reply naturally and helpfully. Be concise.`;
       }
     }
 
+    // Last resort: if model said it would do something but didn't emit JSON, detect from reply text
+    if (!actionResult) {
+      const replyLower = (reply || '').toLowerCase();
+      const msgLower = message.toLowerCase();
+      // Detect SEARCH intent from model's reply or user message
+      const wantsSearch = /(?:search|look\s*up|find|google|research|check)\s+(?:for\s+)?/i.test(replyLower)
+        || /(?:search|look\s*up|find|google|research|check)\s+(?:for\s+)?/i.test(msgLower);
+      // Detect PIPELINE intent
+      const wantsPipeline = /(?:blog\s*post|article|turn.*into|create.*post|write.*up|pipeline)/i.test(replyLower)
+        || /(?:turn|make|write|create|convert)\s+(?:this|that|it|the)/i.test(msgLower);
+
+      if (wantsSearch) {
+        // Extract just the search query, stripping pipeline-related text
+        let query = message.replace(/^(?:search|look up|find|google|research|check)\s+(?:for\s+)?/i, '').replace(/[.!?]+$/, '').trim();
+        query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
+        actionResult = await executeAction('SEARCH', { query: query || message }, ws, model, region);
+        reply = actionResult;
+      }
+      // If user also wants pipeline after search, queue it
+      if (wantsPipeline && wantsSearch) {
+        try {
+          const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
+          const pipelineResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, region);
+          reply += '\n\n' + pipelineResult;
+          actionResult = pipelineResult;
+        } catch { /* pipeline may fail if server self-call times out */ }
+      } else if (wantsPipeline && !wantsSearch) {
+        const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
+        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, region);
+        reply = actionResult;
+      }
+    }
+
     // Append action result to reply if any
     if (actionResult && !reply.includes(actionResult)) {
       actionResult = actionResult.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>/gi, '').trim();
@@ -650,8 +688,11 @@ async function executeAction(action, params, ws, model, region = '') {
         }
       }
       case 'SEARCH': {
-        const query = (params.query || params.name || '').trim();
+        let query = (params.query || params.name || '').trim();
         if (!query) return 'Could not search — no query provided.';
+        // Clean query: strip pipeline/article-related suffixes the model may have appended
+        query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+(?:this|that|it|the)?\s*(?:into|to|as)?\s*(?:a\s+)?(?:blog\s*post|article|post|draft|content|pipeline).*$/i, '').trim();
+        query = query.replace(/\s*[-–—]\s*(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
         const regionQuery = (params.region || region || '').trim();
         const loc = resolveNewsLocale(regionQuery);
         const scopedQuery = regionQuery ? `${query} ${regionQuery}` : query;
