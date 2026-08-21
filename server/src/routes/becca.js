@@ -82,8 +82,6 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
       messages,
       temperature,
       max_tokens: maxTokens,
-      tools: [],
-      tool_choice: 'none',
     }),
   });
 
