@@ -464,12 +464,14 @@ You have these capabilities:
 - MEMORY: Remember something important
 - CHAT: Just have a conversation
 
-When the user asks you to do something, respond with a JSON action block AND a natural reply. Do NOT use function/tool calling — output the JSON block as plain text only. Format:
+When the user asks you to do something, you MUST respond with a JSON action block. Format your ENTIRE response as:
 {
   "action": "ACTION_TYPE",
   "params": { ... },
   "reply": "Your natural language response to the user"
 }
+
+Do NOT skip the JSON block. Do NOT just reply in plain text. Always include the JSON action block first, then the reply field contains your conversational response.
 
 Action types and params:
 - SEARCH: { "query": "search terms" }
@@ -508,8 +510,19 @@ Always reply naturally and helpfully. Be concise.`;
       }
     } catch {}
 
+    // Fallback: if AI didn't emit a JSON action, detect intent from user message
+    if (!actionResult) {
+      const lower = message.toLowerCase();
+      const addMatch = lower.match(/(?:keep tabs on|track|monitor|add to (?:my )?watchlist|follow|watch)\s+(.+)/i);
+      if (addMatch) {
+        let topicName = addMatch[1].replace(/[.!?]+$/, '').trim();
+        actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
+        reply = text + '\n\n' + actionResult;
+      }
+    }
+
     // Append action result to reply if any
-    if (actionResult) {
+    if (actionResult && !reply.includes(actionResult)) {
       reply += '\n\n' + actionResult;
     }
 
