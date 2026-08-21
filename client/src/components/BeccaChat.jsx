@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
 import { WELCOME } from '../lib/welcome';
+import { renderMarkdown } from './PostPreviewPage';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -57,7 +58,7 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
       setMessages(data.map(m => ({
         id: m.id,
         role: m.role === 'assistant' ? 'becca' : m.role,
-        content: m.content,
+        content: m.role === 'assistant' ? renderMarkdown(m.content) : m.content,
         isHTML: m.role === 'assistant',
       })));
     } catch { setMessages([]); }
@@ -68,7 +69,7 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   }
 
   function appendUser(text) { appendMsg('user', text); }
-  function appendBecca(text) { appendMsg('becca', text, { isHTML: true }); }
+  function appendBecca(text) { appendMsg('becca', renderMarkdown(text), { isHTML: true }); }
   function appendThinking() { appendMsg('thinking', '', { thinkId: 'think-' + Date.now() }); }
   function removeThinking() { setMessages(prev => prev.filter(m => m.role !== 'thinking')); }
 

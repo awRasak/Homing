@@ -48,7 +48,6 @@ export default function App() {
   const [currentProposal, setCurrentProposal] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [importFile, setImportFile] = useState(null);
-  const [aiConfigured, setAiConfigured] = useState(true);
   const [providers, setProviders] = useState({});
   const [activeProvider, setActiveProvider] = useState('anthropic');
   const [loading, setLoading] = useState(true);
@@ -107,7 +106,6 @@ export default function App() {
         const status = await api.status();
         setProviders(status.providers || {});
         setActiveProvider(status.activeProvider || 'anthropic');
-        setAiConfigured(Object.values(status.providers || {}).some((p) => p.configured));
       } catch { /* providers optional */ }
 
       try {
@@ -355,7 +353,14 @@ export default function App() {
       });
       const titleBlock = (activeDesign.sourceTextBlocks || []).find((b) => b.tier === 'title');
       if (titleBlock && proposal.headline) {
-        handleTextOverride(titleBlock.id, proposal.headline);
+        const pages = activeDesign.pages || [];
+        if (pages.length > 1) {
+          const currentOverrides = activeDesign.pageOverrides || {};
+          const page1Overrides = { ...(currentOverrides['1'] || {}), [titleBlock.id]: proposal.headline };
+          patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
+        } else {
+          handleTextOverride(titleBlock.id, proposal.headline);
+        }
       }
     } catch (err) {
       setGenError(err.message || 'Generation failed.');
@@ -380,6 +385,43 @@ export default function App() {
   }
 
   async function handleExport() {
+    if (activeDesign?.sourceImageDataUrl) {
+      try {
+        const { buildEditedPdf } = await import('./lib/buildEditedPdf');
+        const pages = activeDesign.pages?.length
+          ? activeDesign.pages.map((p) => ({
+              pageNum: p.pageNum,
+              dataUrl: p.dataUrl,
+              width: p.width,
+              height: p.height,
+              blocks: p.blocks || [],
+            }))
+          : [{
+              pageNum: 1,
+              dataUrl: activeDesign.sourceImageDataUrl,
+              width: activeDesign.sourceImageWidth,
+              height: activeDesign.sourceImageHeight,
+              blocks: activeDesign.sourceTextBlocks || [],
+            }];
+        const overridesByPage = activeDesign.pages?.length
+          ? Object.fromEntries(Object.entries(activeDesign.pageOverrides || {}))
+          : { 1: activeDesign.textOverrides || {} };
+        const bytes = await buildEditedPdf(pages, overridesByPage);
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${activeDesign.name || 'design'}-edited.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        return;
+      } catch (err) {
+        console.error('Edited PDF export failed', err);
+      }
+    }
+
     if (currentProposal?.id) {
       try {
         await api.downloadPDF(currentProposal.id);
@@ -596,11 +638,6 @@ export default function App() {
                   <div className="editor-resizer" />
 
                   <div className="editor-canvas">
-                    {!aiConfigured && (
-                      <div className="banner-warning no-print">
-                        No AI providers configured — generation is disabled. Add an API key to server/.env and restart the server.
-                      </div>
-                    )}
                     {activeDesign && importFile && (
                       <div className="app-preview-full">
                         <div className="import-review-head">
@@ -709,18 +746,18 @@ export default function App() {
 
                   <div className="editor-panel no-print">
                     <div className="panel-step-indicator">
-                      <span className={`panel-step ${tab === 'setup' ? 'panel-step-active' : ''}`} onClick={() => onTabChange('setup')}>
+                      <span className={`panel-step ${tab === 'setup' ? 'panel-step-active' : ''}`} onClick={() => setTab('setup')}>
                         Setup
                       </span>
-                      <span className={`panel-step ${tab === 'generate' ? 'panel-step-active' : ''}`} onClick={() => onTabChange('generate')}>
+                      <span className={`panel-step ${tab === 'generate' ? 'panel-step-active' : ''}`} onClick={() => setTab('generate')}>
                         Generate
                       </span>
-                      <span className={`panel-step ${tab === 'batch' ? 'panel-step-active' : ''}`} onClick={() => onTabChange('batch')}>
+                      <span className={`panel-step ${tab === 'batch' ? 'panel-step-active' : ''}`} onClick={() => setTab('batch')}>
                         Batch
                       </span>
                     </div>
                     <div className="panel-content">
-                      {tab === 'setup' && (
+                      {tab === 'setup' && activeDesign && (
                         <SetupForm
                           design={activeDesign}
                           onChange={handleSetupChange}
@@ -730,7 +767,7 @@ export default function App() {
                       )}
                       {tab === 'generate' && (
                         <div className="generate-panel">
-                          <RecipientForm onGenerate={onGenerate} generating={generating} providers={providers} activeProvider={activeProvider} />
+                          <RecipientForm onGenerate={handleGenerate} generating={generating} providers={providers} activeProvider={activeProvider} />
                           {genError && <p className="import-error">{genError}</p>}
                           <h3 style={{ marginTop: '1.5rem' }}>History</h3>
                           <HistoryList proposals={proposals} activeProposalId={currentProposal?.id} onSelect={handleSelectHistory} />

@@ -1119,6 +1119,20 @@ select:focus {
   background: var(--green-soft);
   pointer-events: none;
 }
+.logo-detect-rect {
+  position: absolute;
+  border: 2px solid #2ea2ff;
+  background: rgba(46, 162, 255, 0.12);
+  pointer-events: none;
+  z-index: 3;
+}
+.logo-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.logo-actions .btn-secondary { width: auto; }
 .import-controls {
   margin-top: 0.75rem;
 }

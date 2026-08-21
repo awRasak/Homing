@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 
 const GENERATE_TOOL_SCHEMA = {
   name: 'submit_proposal_copy',
@@ -113,6 +114,30 @@ async function generateGemini({ prompt, apiKey, model }) {
   return parsed;
 }
 
+async function generateGroq({ prompt, apiKey, model }) {
+  const client = new Groq({ apiKey });
+  const response = await client.chat.completions.create({
+    model: model || 'llama-3.3-70b-versatile',
+    messages: [
+      {
+        role: 'system',
+        content: 'You are an expert B2B proposal writer. Always respond with valid JSON only, no markdown.',
+      },
+      { role: 'user', content: prompt },
+    ],
+    temperature: 0.7,
+    max_tokens: 1500,
+  });
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('No content returned from Groq');
+  const cleaned = content.replace(/```json\n?|\n?```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+  if (!parsed.headline || !parsed.opening || !parsed.bodyParagraphs || !parsed.closing) {
+    throw new Error('Invalid structured output from Groq');
+  }
+  return parsed;
+}
+
 const PROVIDERS = {
   anthropic: {
     name: 'Anthropic',
@@ -128,6 +153,11 @@ const PROVIDERS = {
     name: 'Google Gemini',
     envKey: 'GEMINI_API_KEY',
     generate: generateGemini,
+  },
+  groq: {
+    name: 'Groq',
+    envKey: 'GROQ_API_KEY',
+    generate: generateGroq,
   },
 };
 

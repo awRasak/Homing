@@ -12,8 +12,14 @@ export default function BatchGeneratePanel({ designId, onComplete, providers, ac
   const configuredProviders = Object.entries(providers || {}).filter(([, p]) => p.configured);
 
   useEffect(() => {
+    if (activeProvider) setProvider(activeProvider);
+  }, [activeProvider]);
+
+  useEffect(() => {
     api.listRecipients().then((list) => {
       setRecipients(list);
+      setLoading(false);
+    }).catch(() => {
       setLoading(false);
     });
   }, []);

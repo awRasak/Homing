@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function RecipientForm({ onGenerate, generating, providers, activeProvider }) {
   const [companyName, setCompanyName] = useState('');
   const [notes, setNotes] = useState('');
   const [provider, setProvider] = useState(activeProvider || '');
   const configuredProviders = Object.entries(providers || {}).filter(([, p]) => p.configured);
+
+  useEffect(() => {
+    if (activeProvider) setProvider(activeProvider);
+  }, [activeProvider]);
 
   function submit(e) {
     e.preventDefault();

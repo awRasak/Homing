@@ -23,6 +23,8 @@ function serializeDesign(row) {
     sourceImageHeight: row.source_image_height,
     sourceTextBlocks: JSON.parse(row.source_text_blocks || '[]'),
     textOverrides: JSON.parse(row.text_overrides || '{}'),
+    pages: JSON.parse(row.pages || '[]'),
+    pageOverrides: JSON.parse(row.page_overrides || '{}'),
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -97,6 +99,14 @@ router.put('/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'textOverrides')) {
     sets.push('text_overrides = ?');
     values.push(JSON.stringify(req.body.textOverrides || {}));
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'pages')) {
+    sets.push('pages = ?');
+    values.push(JSON.stringify(req.body.pages || []));
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'pageOverrides')) {
+    sets.push('page_overrides = ?');
+    values.push(JSON.stringify(req.body.pageOverrides || {}));
   }
   sets.push('updated_at = ?');
   values.push(nowIso());

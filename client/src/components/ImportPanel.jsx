@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  renderSource,
+  renderAllPages,
   extractPalette,
   sampleColorAtPixel,
   cropCanvasRegion,
-  detectFonts,
-  extractContent,
-  buildTextBlocks,
+  detectLogoRegion,
 } from '../lib/pdfExtract';
 import { outcomeLabel } from '../lib/googleFonts';
 
@@ -25,13 +23,14 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
   const [selectedAccent, setSelectedAccent] = useState(null);
   const [fontInfo, setFontInfo] = useState(null);
   const [notes, setNotes] = useState([]);
-  const [isPdf, setIsPdf] = useState(false);
   const [status, setStatus] = useState('idle'); // idle | analyzing | done | error
   const [error, setError] = useState('');
 
   const [cropMode, setCropMode] = useState(false);
   const [dragStart, setDragStart] = useState(null);
   const [dragRect, setDragRect] = useState(null);
+  const [detectedLogo, setDetectedLogo] = useState(null);
+  const [logoUseDetected, setLogoUseDetected] = useState(false);
   const imgRef = useRef(null);
 
   useEffect(() => {
@@ -44,42 +43,40 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
 
     (async () => {
       try {
-        const { canvas: srcCanvas, textItems, isPdf: pdf } = await renderSource(file);
+        const allPages = await renderAllPages(file);
         if (cancelled) return;
-        setCanvas(srcCanvas);
-        setImgSrc(srcCanvas.toDataURL('image/png'));
-        setIsPdf(pdf);
 
-        const swatches = extractPalette(srcCanvas);
+        const firstPage = allPages[0];
+        setCanvas(firstPage.canvas);
+        setImgSrc(firstPage.dataUrl);
+
+        const swatches = extractPalette(firstPage.canvas);
         setPalette(swatches);
 
-        let content = null;
-        let fonts = null;
-        let blocks = [];
-        if (pdf && textItems?.length) {
-          content = extractContent(textItems);
-          fonts = detectFonts(textItems);
-          setFontInfo(fonts);
-          blocks = buildTextBlocks(srcCanvas, textItems);
-        } else if (pdf) {
-          setNotes(['This PDF has no extractable text layer (likely a scanned image) — colors and logo can still be sampled, but fonts and content could not be read.']);
-        } else {
-          setNotes(['Image upload: colors and logo can be sampled, but font and text-content detection require a PDF.']);
-        }
+        const logoRegion = detectLogoRegion(firstPage.canvas);
+        setDetectedLogo(logoRegion);
+        setLogoUseDetected(false);
+
+        let content = firstPage.content;
+        let fonts = firstPage.fonts;
+        if (fonts) setFontInfo(fonts);
 
         setStatus('done');
-        onExtracted?.({
-          palette: swatches,
-          content,
-          fonts,
-          notes: content?.notes || [],
-          sourceImage: {
-            dataUrl: srcCanvas.toDataURL('image/png'),
-            width: srcCanvas.width,
-            height: srcCanvas.height,
-          },
-          blocks,
-        });
+        if (!cancelled) {
+          onExtracted?.({
+            palette: swatches,
+            content,
+            fonts,
+            notes: content?.notes || [],
+            pages: allPages,
+            sourceImage: {
+              dataUrl: firstPage.dataUrl,
+              width: firstPage.width,
+              height: firstPage.height,
+            },
+            blocks: firstPage.blocks,
+          });
+        }
       } catch (err) {
         console.error(err);
         if (!cancelled) {
@@ -150,13 +147,23 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
     onLogoExtracted?.(dataUrl);
     setCropMode(false);
     setDragRect(null);
+    setLogoUseDetected(false);
+  }
+
+  function useDetectedLogo() {
+    if (!detectedLogo || !canvas) return;
+    const dataUrl = cropCanvasRegion(canvas, detectedLogo.x, detectedLogo.y, detectedLogo.width, detectedLogo.height);
+    onLogoExtracted?.(dataUrl);
+    setLogoUseDetected(true);
+    setCropMode(false);
+    setDragRect(null);
   }
 
   if (!file) return null;
 
   return (
     <div className="import-panel">
-      {status === 'analyzing' && <p className="import-status">Reading design…</p>}
+        {status === 'analyzing' && <p className="import-status">Reading design…</p>}
       {status === 'error' && <p className="import-status import-error">{error}</p>}
 
       {imgSrc && (
@@ -187,6 +194,17 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
                 }}
               />
             )}
+            {detectedLogo && !cropMode && !logoUseDetected && (
+              <div
+                className="logo-detect-rect"
+                style={{
+                  left: `${(detectedLogo.x / canvas.width) * 100}%`,
+                  top: `${(detectedLogo.y / canvas.height) * 100}%`,
+                  width: `${(detectedLogo.width / canvas.width) * 100}%`,
+                  height: `${(detectedLogo.height / canvas.height) * 100}%`,
+                }}
+              />
+            )}
           </div>
 
           <div className="import-controls">
@@ -211,9 +229,17 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
 
             <div className="import-field-label" style={{ marginTop: '0.75rem' }}>Logo</div>
             {!cropMode ? (
-              <button type="button" className="btn-secondary" onClick={() => setCropMode(true)}>
-                Select logo region
-              </button>
+              <div className="logo-actions">
+                <button type="button" className="btn-secondary" onClick={() => setCropMode(true)}>
+                  Select logo region
+                </button>
+                {detectedLogo && !logoUseDetected && (
+                  <button type="button" className="btn-secondary" onClick={useDetectedLogo}>
+                    Use detected logo
+                  </button>
+                )}
+                {logoUseDetected && <span className="hint-text">Detected logo applied ✓</span>}
+              </div>
             ) : (
               <div className="crop-actions">
                 <span className="hint-text">Drag a box over the logo, then confirm.</span>
@@ -226,7 +252,7 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
               </div>
             )}
 
-            {isPdf && (
+            {fontInfo && (
               <>
                 <div className="import-field-label" style={{ marginTop: '0.75rem' }}>Font detection</div>
                 {fontInfo ? (

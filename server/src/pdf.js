@@ -127,6 +127,56 @@ function buildProposalHTML(design, proposal) {
 </html>`;
 }
 
+function buildMultiPageHTML(pages, pageOverrides) {
+  const overrides = pageOverrides ? JSON.parse(pageOverrides) : {};
+  const isFlat = overrides && typeof overrides === 'object' && Object.keys(overrides).length > 0 && !/^\d+$/.test(Object.keys(overrides)[0]);
+
+  const pageImages = pages.map((p, i) => {
+    const pageNum = String(i + 1);
+    const pageOvr = isFlat ? overrides : (overrides[pageNum] || {});
+    let blocks = p.blocks || [];
+
+    if (Object.keys(pageOvr).length > 0) {
+      blocks = blocks.map((b) => ({
+        ...b,
+        text: Object.prototype.hasOwnProperty.call(pageOvr, b.id) ? pageOvr[b.id] : b.text,
+      }));
+    }
+
+    const blocksHtml = blocks.map((b) => {
+      const left = (b.x / p.width * 100).toFixed(2);
+      const top = (b.y / p.height * 100).toFixed(2);
+      const width = (b.width / p.width * 100).toFixed(2);
+      const height = (b.height / p.height * 100).toFixed(2);
+      const fontSize = (b.height / p.width * 100).toFixed(2);
+      const display = b.text ? 'block' : 'none';
+      return `<div style="position:absolute;left:${left}%;top:${top}%;width:${width}%;min-height:${height}%;font-size:${fontSize}cqw;color:${b.fg || '#000'};background:${b.bg || 'transparent'};line-height:1.15;white-space:pre-wrap;display:${display};">${escapeHtml(b.text || '')}</div>`;
+    }).join('');
+
+    return `
+      <div class="page" style="position:relative;width:100%;aspect-ratio:${p.width}/${p.height};page-break-after:always;">
+        <img src="${p.dataUrl}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;" />
+        <div style="position:absolute;inset:0;width:100%;height:100%;">${blocksHtml}</div>
+      </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { margin: 0; padding: 0; }
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+</style>
+</head>
+<body>
+  ${pageImages}
+</body>
+</html>`;
+}
+
 function escapeHtml(str) {
   return String(str || '')
     .replace(/&/g, '&amp;')
@@ -151,7 +201,10 @@ export async function generatePDF(design, proposal) {
 
   try {
     const page = await browser.newPage();
-    const html = buildProposalHTML(design, proposal);
+    const pages = JSON.parse(design.pages || '[]');
+    const html = pages.length >= 1
+      ? buildMultiPageHTML(pages, design.page_overrides || design.text_overrides)
+      : buildProposalHTML(design, proposal);
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 15000 });
 
     const pdf = await page.pdf({

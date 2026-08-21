@@ -1,8 +1,7 @@
 import { useState } from 'react';
 
-export default function LivePreview({ design, onOverride }) {
+export default function LivePreview({ sourceImageDataUrl, sourceImageWidth, sourceImageHeight, sourceTextBlocks = [], textOverrides = {}, onOverride }) {
   const [focusedId, setFocusedId] = useState(null);
-  const { sourceImageDataUrl, sourceImageWidth, sourceImageHeight, sourceTextBlocks = [], textOverrides = {} } = design;
 
   function commit(block, el) {
     const newText = el.textContent;

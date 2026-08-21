@@ -72,6 +72,17 @@ for (const [name, def] of newColumns) {
   }
 }
 
+const crColumns = new Set(db.prepare('PRAGMA table_info(campaign_recipients)').all().map((c) => c.name));
+const crNewColumns = [
+  ['created_at', 'TEXT'],
+  ['updated_at', 'TEXT'],
+];
+for (const [name, def] of crNewColumns) {
+  if (!crColumns.has(name)) {
+    db.exec(`ALTER TABLE campaign_recipients ADD COLUMN ${name} ${def}`);
+  }
+}
+
 db.exec(`
 CREATE TABLE IF NOT EXISTS recipients (
   id TEXT PRIMARY KEY,
@@ -114,6 +125,8 @@ CREATE TABLE IF NOT EXISTS campaign_recipients (
   sent_at TEXT,
   opened_at TEXT,
   clicked_at TEXT,
+  created_at TEXT,
+  updated_at TEXT,
   UNIQUE(campaign_id, recipient_id)
 );
 

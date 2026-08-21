@@ -16,7 +16,7 @@ async function handle(res) {
 }
 
 export const api = {
-  status: () => fetch(`${BASE}/status`).then(handle),
+  status: () => fetch(`${BASE}/status?t=${Date.now()}`).then(handle),
 
   listDesigns: () => fetch(`${BASE}/designs`).then(handle),
   createDesign: (partial = {}) =>
