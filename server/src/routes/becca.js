@@ -482,6 +482,7 @@ Action types and params:
 - SEARCH: { "query": "search terms" }
 - BRIEFING: { "topics": ["topic1", "topic2"] } (or empty array for all)
 - ADD_TOPIC: { "name": "topic name", "context": "optional context" }
+IMPORTANT: When the user says "keep tabs on", "keep an eye on", "keep track of", "follow up on", "stay updated on", "keep me posted on", "notify me about", "alert me about", "let me know about", "scout for", "check in on", "look into", "watch", "monitor", "track" — this means ADD_TOPIC. Extract the topic name from what follows these phrases. NEVER just say you'll add it — actually emit the ADD_TOPIC JSON.
 - REMOVE_TOPIC: { "name": "topic name" }
 - PIPELINE: { "topic": "topic name or short summary of the content to turn into a post", "tone": "optional tone" }
 - REMINDER: { "text": "reminder text", "when": "tomorrow at 3pm" }
@@ -554,7 +555,7 @@ Always reply naturally and helpfully. Be concise.`;
     // Fallback: if AI didn't emit a JSON action, detect intent from user message
     if (!actionResult) {
       const lower = message.toLowerCase();
-      const addMatch = lower.match(/(?:keep tabs on|keep an eye on|track|monitor|add to (?:my )?watchlist|follow|watch)\s+(.+)/i);
+      const addMatch = lower.match(/(?:keep tabs on|keep an eye on|keep track of|keep me (?:posted|updated|informed) on|stay (?:on top of|updated on|abreast of)|follow up on|follow|track|monitor|add to (?:my )?watchlist|watch|watching|notify me (?:about|of|on)|alert me (?:about|to)|let me know (?:about|when)|scout for|be (?:on the lookout for|aware of)|check in on|check up on|look into)\s+(.+)/i);
       if (addMatch) {
         let topicName = addMatch[1].replace(/[.!?]+$/, '').trim();
         actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
@@ -589,7 +590,7 @@ Always reply naturally and helpfully. Be concise.`;
       const replyAddMatch = replyLower.match(/(?:added|adding)\s+(?:a\s+)?(?:watch|topic|track(?:ing)?)\s+(?:on|for)\s+(.+?)(?:\.|,|\s+to your|\s+i'll|\s+covering)/i)
         || replyLower.match(/(?:added|adding)\s+["""]?(.+?)["""]?\s+to\s+(?:your\s+)?(?:watchlist|track(?:ing)?)/i)
         || replyLower.match(/(?:i(?:'ve| have))\s+(?:added|added|set up|started)\s+(?:a\s+)?(?:watch|track(?:ing)?|monitor(?:ing)?)\s+(?:on|for)\s+(.+?)(?:\.|,|\s+to your|\s+i'll)/i);
-      const msgAddMatch = msgLower.match(/(?:keep tabs on|keep an eye on|track|monitor|add to (?:my |your )?watchlist|follow|watch|watching)\s+(.+)/i);
+      const msgAddMatch = msgLower.match(/(?:keep tabs on|keep an eye on|keep track of|keep me (?:posted|updated|informed) on|stay (?:on top of|updated on|abreast of)|follow up on|follow|track|monitor|add to (?:my |your )?watchlist|watch|watching|notify me (?:about|of|on)|alert me (?:about|to)|let me know (?:about|when)|scout for|be (?:on the lookout for|aware of)|check in on|check up on|look into)\s+(.+)/i);
 
       if (replyAddMatch || msgAddMatch) {
         let topicName = (replyAddMatch?.[1] || msgAddMatch?.[1] || '').replace(/[.!?]+$/, '').replace(/["""]/g, '').trim();
