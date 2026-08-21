@@ -614,9 +614,10 @@ Always reply naturally and helpfully. Be concise.`;
     }
 
     // Append action result to reply if any
-    if (actionResult && !reply.includes(actionResult)) {
+    if (actionResult) {
       actionResult = actionResult.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>/gi, '').trim();
-      reply += '\n\n' + actionResult;
+      // Use action result directly — model's reply is usually just a promise like "I'll search..."
+      reply = actionResult;
     }
 
     // Strip <think>...</think> tags from final reply (handle unclosed tags)
