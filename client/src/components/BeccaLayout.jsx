@@ -103,7 +103,7 @@ function PanelSessions({ workspace, activeSession, onSelectSession, onNewSession
 }
 
 /* ── Panel: Watchlist ── */
-function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, workspace, beccaModel, onRefresh }) {
+function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, workspace, beccaModel, onRefresh, settings }) {
   const [newTopic, setNewTopic] = useState('');
   const [newContext, setNewContext] = useState('');
   const [briefingTopic, setBriefingTopic] = useState(null);
@@ -132,7 +132,7 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
   async function handleBriefNow(topic) {
     setBriefingTopic(topic.id);
     try {
-      const res = await api.becca.triggerTopicBrief(topic.id, { workspace, model: beccaModel || 'gpt-oss-20b' });
+      const res = await api.becca.triggerTopicBrief(topic.id, { workspace, model: beccaModel || 'gpt-oss-20b', region: settings?.country || '' });
       alert(res.summary || 'Briefing complete');
     } catch (err) {
       alert('Briefing failed: ' + err.message);
@@ -222,6 +222,16 @@ function PanelBriefings({ briefings, settings, onSaveSettings, workspace }) {
   const [expanded, setExpanded] = useState(null);
   const dailyOn = settings?.dailyOn || false;
   const dailyTime = settings?.dailyTime || '07:00';
+  const timezone = settings?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const country = settings?.country || '';
+
+  const TIMEZONES = [
+    'Africa/Lagos', 'Africa/Accra', 'Africa/Nairobi', 'Africa/Johannesburg',
+    'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+    'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+    'Asia/Dubai', 'Asia/Singapore', 'Asia/Tokyo', 'Asia/Shanghai',
+    'Australia/Sydney', 'Pacific/Auckland', 'UTC',
+  ];
 
   function relativeTime(iso) {
     if (!iso) return '';
@@ -256,6 +266,23 @@ function PanelBriefings({ briefings, settings, onSaveSettings, workspace }) {
             <div className="dc-time">{dailyTime}</div>
             <div className="dc-time-hint">tap to set</div>
           </div>
+        </div>
+      </div>
+
+      <div className="bp-section">
+        <div className="cp-label">Briefing Settings</div>
+        <div className="bp-settings-row">
+          <label className="bp-settings-label">Region / Country</label>
+          <input className="cp-input" type="text" placeholder="e.g. Nigeria, UK, USA"
+            value={country}
+            onChange={e => onSaveSettings('daily', { dailyOn, dailyTime, timezone, country: e.target.value })} />
+        </div>
+        <div className="bp-settings-row">
+          <label className="bp-settings-label">Timezone</label>
+          <select className="cp-input" value={timezone}
+            onChange={e => onSaveSettings('daily', { dailyOn, dailyTime, timezone: e.target.value, country })}>
+            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
         </div>
       </div>
 
@@ -540,7 +567,8 @@ export default function BeccaLayout({
           {activeTab === 'watchlist' && (
             <PanelWatchlist topics={topics} onAddTopic={onAddTopic}
               onRemoveTopic={onRemoveTopic} onUpdateTopic={onUpdateTopic}
-              workspace={workspace} beccaModel={beccaModel} onRefresh={onActionExecuted} />
+              workspace={workspace} beccaModel={beccaModel} onRefresh={onActionExecuted}
+              settings={settings} />
           )}
           {activeTab === 'briefings' && (
             <PanelBriefings briefings={briefings} settings={settings}

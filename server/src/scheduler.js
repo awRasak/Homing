@@ -110,7 +110,7 @@ No markdown code fences. Just the JSON object.`,
   return { ...json, word_count: wordCount };
 }
 
-async function runBriefingForWorkspace(ws, model) {
+async function runBriefingForWorkspace(ws, model, region = '') {
   const topics = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY sort_order ASC').all(ws, 'active');
   if (topics.length === 0) return null;
 
@@ -120,7 +120,6 @@ async function runBriefingForWorkspace(ws, model) {
   const existing = db.prepare('SELECT id FROM becca_briefings WHERE workspace = ? AND created_at >= ? AND created_at < ?').get(ws, todayStr, todayStr + 'T23:59:59');
   if (existing) return null; // Already ran today
 
-  const region = '';
   const included = [];
   const skipped = [];
 
@@ -226,8 +225,9 @@ async function tick() {
 
         // Fire if within 1 minute of target time
         if (localHour === targetHour && Math.abs(localMin - targetMin) <= 0) {
-          console.log(`[Scheduler] Running daily brief for workspace "${row.workspace}"`);
-          await runBriefingForWorkspace(row.workspace, 'openai/gpt-oss-20b');
+          const region = settings.country || '';
+          console.log(`[Scheduler] Running daily brief for workspace "${row.workspace}" (region: ${region || 'global'})`);
+          await runBriefingForWorkspace(row.workspace, 'openai/gpt-oss-20b', region);
         }
       } catch (err) {
         console.error(`[Scheduler] Error processing workspace "${row.workspace}":`, err.message);
