@@ -56,14 +56,16 @@
 }
 
 .auth-input {
-  padding: 0.625rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--grey-border);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 0.875rem;
+  background: var(--surface);
+  border: 1.5px solid var(--grey-border);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.92rem;
+  color: var(--ink);
+  width: 100%;
+  font-family: var(--font);
   outline: none;
-  transition: border-color 0.15s;
+  transition: all 0.15s;
 }
 
 .auth-input:focus {
@@ -72,29 +74,35 @@
 
 .auth-input:-webkit-autofill,
 .auth-input:autofill {
-  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset !important;
-  box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset !important;
+  box-shadow: 0 0 0 1000px var(--surface) inset !important;
   -webkit-text-fill-color: var(--ink) !important;
   caret-color: var(--ink);
   transition: background-color 5000s ease-in-out 0s, border-color 0.15s;
-  border-color: var(--grey-border);
+  background: var(--surface) !important;
+  border: 1.5px solid var(--grey-border) !important;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.92rem;
+  color: var(--ink);
+  font-family: var(--font);
   outline: none !important;
-  font-size: 0.875rem;
-  letter-spacing: normal;
-  font-weight: normal;
 }
 
 .auth-input:-webkit-autofill:focus,
 .auth-input:autofill:focus {
-  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset !important;
-  box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset !important;
+  box-shadow: 0 0 0 1000px var(--surface) inset !important;
   -webkit-text-fill-color: var(--ink) !important;
   caret-color: var(--ink);
-  border-color: var(--green) !important;
+  background: var(--surface) !important;
+  border: 1.5px solid var(--green) !important;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.92rem;
+  color: var(--ink);
+  font-family: var(--font);
   outline: none !important;
-  font-size: 0.875rem;
-  letter-spacing: normal;
-  font-weight: normal;
 }
 
 .auth-error {
