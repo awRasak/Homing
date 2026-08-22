@@ -548,6 +548,12 @@ export default function App() {
     setBeccaMemory(prev => prev.filter(m => m.id !== id));
   }
 
+  function handleBeccaRefreshMemory() {
+    api.becca.listMemory()
+      .then(memory => setBeccaMemory(Array.isArray(memory) ? memory : []))
+      .catch(() => {});
+  }
+
   async function handleBeccaSaveSettings(key, value) {
     await api.becca.saveSettings(key, value);
     setBeccaSettings(prev => ({ ...prev, ...value }));
@@ -1078,6 +1084,7 @@ export default function App() {
       {beccaSettingsOpen && (
         <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
           onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}
+          onRefreshMemory={handleBeccaRefreshMemory}
           onSaveSettings={handleBeccaSaveSettings}
           onClose={() => setBeccaSettingsOpen(false)} />
       )}

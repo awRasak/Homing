@@ -13,6 +13,7 @@
   --green-dark:   #a0c200;
   --green-text:   #1e211e;
   --green-soft:   rgba(200, 240, 0, 0.12);
+  --green-deep:   #567400;
   --shadow-sm:    none;
   --shadow-md:    none;
   --radius-sm:    12px;
@@ -42,6 +43,7 @@
   --green-dark:   #b0d800;
   --green-text:   #141614;
   --green-soft:   rgba(200, 240, 0, 0.1);
+  --green-deep:   #567400;
   --shadow-sm:    none;
   --shadow-md:    none;
   --user-bubble:  #2e322e;

@@ -135,6 +135,360 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
 }
 
 // ═══════════════════════════════════════════
+// COMPANY SCAN — onboarding autofill from website
+// ═══════════════════════════════════════════
+
+function htmlToText(html) {
+  return String(html || '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n\s*/g, '\n')
+    .trim();
+}
+
+async function fetchPageText(url, timeoutMs = 15000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    });
+    if (!r.ok) return '';
+    const type = r.headers.get('content-type') || '';
+    if (!type.includes('html')) return '';
+    return htmlToText(await r.text()).slice(0, 12000);
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPageHtml(url, timeoutMs = 15000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    });
+    if (!r.ok) { console.error(`[fetch] ${url} → HTTP ${r.status}`); return ''; }
+    const type = r.headers.get('content-type') || '';
+    if (!type.includes('html')) { console.error(`[fetch] ${url} → non-html: ${type}`); return ''; }
+    return await r.text();
+  } catch (err) {
+    console.error(`[fetch] ${url} → ${err.name}: ${err.message}${err.cause?.code ? ` (${err.cause.code})` : ''}`);
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Many modern sites are client-side React/Vue apps: the HTML is an empty shell
+// and ALL the copy ("made for Nigeria", product descriptions…) lives inside
+// their JS bundles. This mines those bundles for human-readable string
+// literals so we can read what a visitor would actually see.
+async function fetchScriptCopy(html, baseUrl, timeoutMs = 15000) {
+  const srcs = [...String(html).matchAll(/<script[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
+  const assets = [];
+  for (const s of srcs) {
+    try {
+      const u = new URL(s, baseUrl);
+      if (u.origin === new URL(baseUrl).origin) assets.push(u.href);
+    } catch { /* skip malformed */ }
+  }
+  let text = '';
+  for (const url of assets.slice(0, 5)) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36' },
+      });
+      if (r.ok) {
+        const js = await r.text();
+        if (js.length <= 3_000_000) {
+          // Unescape first — SPA bundles often embed copy inside escaped
+          // strings ("Licensed by the Central Bank of Nigeria."), so we can't
+          // rely on clean quote boundaries. Instead: unescape everything, then
+          // harvest prose-like character runs wherever they appear.
+          const cleaned = js
+            .replace(/\\u[0-9a-fA-F]{4}/g, ' ')
+            .replace(/\\n/g, ' ')
+            .replace(/\\"/g, '"')
+            .replace(/\\'/g, "'");
+          const chunks = cleaned.match(/[A-Za-z][A-Za-z0-9 ,.'’%$₦&:/-]{30,400}/g) || [];
+          for (const chunk of chunks) {
+            const s = chunk.trim();
+            if (s.split(/\s+/).length < 5) continue;           // at least 5 words
+            const letters = (s.match(/[A-Za-z]/g) || []).length;
+            if (letters / s.length < 0.65) continue;           // mostly letters
+            if (/[{}()<>;=|\\]/.test(s)) continue;             // still looks like code
+            if (/\.(js|css|png|jpg|svg|woff)\b/i.test(s)) continue;
+            if (/^[a-z0-9]/.test(s) && !/ /.test(s.slice(0, 15))) continue;
+            text += '\n' + s;
+            if (text.length > 25000) break;
+          }
+        }
+      }
+    } catch { /* one dead bundle shouldn't kill the scan */ }
+    finally { clearTimeout(timer); }
+    if (text.length > 25000) break;
+  }
+  return text.trim();
+}
+
+function extractMeta(html) {
+  const grab = (re) => {
+    const m = String(html || '').match(re);
+    return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim() : '';
+  };
+  return {
+    title: grab(/<title[^>]*>([\s\S]*?)<\/title>/i),
+    siteName: grab(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i)
+      || grab(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:site_name["']/i),
+    description: grab(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i)
+      || grab(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i),
+  };
+}
+
+const LINK_HINTS = /(about|product|service|solution|pricing|feature|contact|team|company|what-we-do|industr|platform|for-business)/i;
+
+// Country-code TLDs → display region, used to scope competitor/market research.
+const TLD_REGION = {
+  ng: 'Nigeria', ke: 'Kenya', gh: 'Ghana', za: 'South Africa',
+  eg: 'Egypt', tz: 'Tanzania', ug: 'Uganda', rw: 'Rwanda',
+  uk: 'the United Kingdom', ca: 'Canada', au: 'Australia',
+  in: 'India', sg: 'Singapore', ke: 'Kenya', ng: 'Nigeria',
+};
+
+function detectRegion(host, text) {
+  const parts = String(host || '').toLowerCase().replace(/^www\./, '').split('.');
+  let region = '';
+  for (let i = 0; i < parts.length && !region; i++) {
+    const suffix = parts.slice(i).join('.');
+    region = TLD_REGION[suffix] || '';
+  }
+  if (!region && text) {
+    // Cities & currencies are stronger signals than an explicit country name —
+    // a .com fintech that never says "Nigeria" but prices in ₦ and mentions
+    // Lagos is still a Nigerian company.
+    const hay = text.toLowerCase();
+    const hints = [
+      [/\b(lagos|abuja|port harcourt|kano|ibadan|enugu|benin city)\b/, 'Nigeria'],
+      [/₦|\bnaira\b/, 'Nigeria'],
+      [/\b(nairobi|mombasa|kisumu)\b|\bksh\b|kenyan shilling/, 'Kenya'],
+      [/\b(accra|kumasi|tema)\b|\bgh¢\b|\bcedis?\b/, 'Ghana'],
+      [/\b(johannesburg|cape town|durban|pretoria)\b|\bzAR\b|\brand\b/, 'South Africa'],
+      [/\b(london|manchester|birmingham)\b|£\s?\d/, 'the United Kingdom'],
+      [/\b(mumbai|delhi|bangalore)\b|₹/, 'India'],
+    ];
+    for (const [re, r] of hints) {
+      if (re.test(hay)) { region = r; break; }
+    }
+  }
+  return region;
+}
+
+function extractInternalLinks(html, origin) {
+  const out = [];
+  const seen = new Set();
+  const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) && out.length < 40) {
+    let href = m[1];
+    if (/^(mailto:|tel:|javascript:)/i.test(href)) continue;
+    try {
+      const u = new URL(href, origin);
+      if (u.origin !== origin) continue;
+      u.hash = '';
+      const path = u.pathname.replace(/\/+$/, '') || '/';
+      if (path === '/' || seen.has(path)) continue;
+      // skip assets & feeds
+      if (/\.(pdf|jpg|png|xml|zip|webp|css|js)$/i.test(path)) continue;
+      seen.add(path);
+      const linkText = m[2].replace(/<[^>]+>/g, ' ').trim().slice(0, 60);
+      if (LINK_HINTS.test(path) || LINK_HINTS.test(linkText)) out.push(origin + path);
+    } catch { /* bad href */ }
+  }
+  return [...new Set(out)];
+}
+
+router.post('/scan-company', async (req, res) => {
+  const raw = String(req.body.url || '').trim();
+  const userRegion = String(req.body.region || '').trim();
+  if (!raw) return res.status(400).json({ error: 'A website URL is required.' });
+  const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let origin;
+  let host;
+  try { const u = new URL(url); origin = u.origin; host = u.host; } catch {
+    return res.status(400).json({ error: 'That does not look like a valid website.' });
+  }
+
+  // 1. Homepage first — it drives link discovery and gives us meta tags.
+  const homeHtml = await fetchPageHtml(origin);
+  if (!homeHtml) {
+    return res.status(422).json({ error: "Couldn't read that site. You can fill in the details manually instead." });
+  }
+  const meta = extractMeta(homeHtml);
+  let homeText = htmlToText(homeHtml).slice(0, 12000);
+
+  // SPA shells render empty in raw HTML — mine the JS bundles for the copy a
+  // visitor would actually see (hero subcopy like "made for Nigeria" included).
+  if (homeText.length < 600 && homeHtml.length < 4000) {
+    const scriptCopy = await fetchScriptCopy(homeHtml, origin);
+    if (scriptCopy) homeText = (homeText + '\n' + scriptCopy).slice(0, 12000);
+  }
+
+  // 2. Follow internal links that look like they describe the business
+  //    (about / products / pricing / team…), capped so scans stay fast.
+  const discovered = extractInternalLinks(homeHtml, origin).slice(0, 6);
+  const guesses = ['/about', '/about-us', '/products', '/services', '/pricing']
+    .map(p => origin + p)
+    .filter(u => !discovered.includes(u));
+  const pagesToFetch = [...new Set([...discovered, ...guesses])].slice(0, 8);
+
+  const extraTexts = await Promise.all(pagesToFetch.map(u => fetchPageText(u)));
+  const scanned = ['', ...pagesToFetch.filter((_, i) => extraTexts[i])];
+  const combined = [
+    meta.title && `PAGE TITLE: ${meta.title}`,
+    meta.siteName && `SITE NAME: ${meta.siteName}`,
+    meta.description && `META DESCRIPTION: ${meta.description}`,
+    homeText.slice(0, 7000),
+    ...extraTexts.filter(Boolean).map(t => t.slice(0, 4000)),
+  ].filter(Boolean).join('\n\n').slice(0, 16000);
+
+  // Region context — a .ng company should be benchmarked against .ng reality.
+  // The user's explicit answer wins; otherwise detect from TLD + page content
+  // (checked across ALL scraped pages — JS-only homepages carry no signal).
+  const region = userRegion || detectRegion(host, [homeText, ...extraTexts].filter(Boolean).join('\n'));
+
+  const regionBlock = region
+    ? `\n\nCONTEXT: This company operates in / primarily serves ${region}. Your answer MUST reflect that reality:
+- "competitors": ONLY companies that actually operate in and serve ${region}. Exclude global or foreign-market companies even if they are famous, unless they genuinely serve ${region}.
+- "target_market" and "value_proposition": scoped to ${region} where relevant.
+You may use your live web search to verify who actually competes there.`
+    : '';
+
+  // ── Stage A: live competitor research (compound) ──
+  // compound has a tight per-request budget on this tier, so this call gets a
+  // tiny payload — just enough for it to web-search the right category.
+  let researchHints = '';
+  let briefRaw = '';
+  for (let attempt = 0; attempt < 2 && !briefRaw; attempt++) {
+    try {
+      briefRaw = await callGroq({
+        model: 'compound',
+        temperature: 0.3,
+        maxTokens: 500,
+        system: 'You are a market researcher with live web search. Reply ONLY with a JSON object — no markdown fences, no commentary.',
+        user: `Company: ${meta.siteName || host} (${host})${region ? ` — operates in ${region}` : ''}
+What it says about itself: "${(meta.description || homeText).replace(/\s+/g, ' ').slice(0, 700)}"
+
+Identify the exact market category (by what the product DOES, not the broad industry), then find real competitors: companies solving the SAME problem for the SAME customer with a similar business model${region ? `, operating in ${region}` : ''}. Local players first — fame ≠ competition; e.g. a vehicle-documents platform does NOT compete with car marketplaces.
+Reply JSON: {"category":"...","competitors":["..."]}`,
+      });
+    } catch (err) {
+      console.error(`scan-company research attempt ${attempt + 1} failed:`, err.message);
+      await sleep(1200);
+    }
+  }
+  if (briefRaw) {
+    const m = stripThink(briefRaw).match(/\{[\s\S]*\}/);
+    if (m) researchHints = m[0];
+  }
+  // ── Stage B: full profile extraction (gpt-oss-120b, bigger context) ──
+  const scanPromptBody = `${combined}${regionBlock}${researchHints ? `\n\nLive research hints from a web-searching analyst (verify against the site text; keep only what holds): ${researchHints}` : ''}
+
+Build a company profile as JSON with exactly these keys, in this order:
+"category" (FIRST — 3-6 words naming the EXACT niche by what the product DOES, e.g. 'vehicle ownership renewals platform', 'SME inventory software'. Everything below depends on this; never a broad industry like just 'automotive' or 'fintech'),
+"company_name" (string — prefer the official brand name from title/site name),
+"description" (2-3 sentences: what they do, who they serve, what makes them different),
+"key_products" (array of up to 5 short strings naming their main products/services/features),
+"competitors" (array of up to 5 REAL companies — every one must belong to "category": same problem, same customer, similar business model),
+"target_market" (short string describing their typical customer),
+"value_proposition" (1-2 sentences on why customers choose them),
+"industries" (array of 1-3 items chosen ONLY from: Automotive, Technology, Finance, Healthcare, Energy, Retail, Policy / Gov, Media, Real Estate, Education, Logistics, Agriculture, Manufacturing, Telecoms, Consulting).
+
+COMPETITOR RULES — follow strictly:
+- Decide "category" first, then list competitors FROM THAT CATEGORY only.
+- Same industry ≠ competitor. A vehicle-ownership/renewals/documents platform competes with other ownership-services platforms — NOT with car marketplaces or dealerships (Jiji, Cars45, Cheki sell cars; that is a different business). A payments API does not compete with a consumer banking app.
+- Do NOT default to the most famous companies in the broad industry — fame ≠ competition.
+- Fill EVERY field; infer when the site doesn't state something explicitly.`;
+
+  try {
+    let rawJson;
+    let lastErr;
+    for (let attempt = 0; attempt < 2 && !rawJson; attempt++) {
+      try {
+        const reply = await callGroq({
+          model: 'gpt-oss-120b',
+          temperature: 0.2,
+          maxTokens: 1100,
+          system: 'You are a thorough business analyst. You extract structured company profiles and reply with ONLY a JSON object — no markdown fences, no commentary.',
+          user: `Website text for ${host}:\n\n${scanPromptBody}`,
+        });
+        if (reply && String(reply).trim()) rawJson = reply;
+        else throw new Error('Model returned an empty reply');
+      } catch (err) {
+        lastErr = err;
+        await sleep(1200);
+      }
+    }
+    if (!rawJson) throw lastErr || new Error('Scan failed');
+
+    const text = stripThink(rawJson);
+    console.log('[scan] raw reply head:', String(text).slice(0, 240).replace(/\n/g, ' '));
+    let match = text.match(/\{[\s\S]*\}/);
+    if (!match) {
+      // Model may have been cut off mid-JSON — salvage the object if we can.
+      const i = text.indexOf('{');
+      if (i >= 0) {
+        let cand = text.slice(i);
+        const last = cand.lastIndexOf('}');
+        cand = last >= 0 ? cand.slice(0, last + 1) : cand + '}';
+        match = [cand];
+      }
+    }
+    if (!match) throw new Error('No JSON in model reply');
+    const parsed = JSON.parse(match[0]);
+
+    const pickArr = (v) => Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean).slice(0, 5) : [];
+    res.json({
+      profile: {
+        company_name: String(parsed.company_name || '').trim() || meta.siteName || '',
+        company_description: [String(parsed.description || '').trim(), meta.description].find(s => s.length > 40) || String(parsed.description || '').trim(),
+        key_products: pickArr(parsed.key_products),
+        competitors: pickArr(parsed.competitors),
+        target_market: String(parsed.target_market || '').trim(),
+        value_proposition: String(parsed.value_proposition || '').trim(),
+        industries: pickArr(parsed.industries),
+      },
+      scanned_pages: scanned.length,
+      region,
+    });
+  } catch (err) {
+    console.error('scan-company failed:', err.message);
+    res.status(502).json({ error: 'Could not analyse that site right now. You can fill in the details manually instead.' });
+  }
+});
+
+// ═══════════════════════════════════════════
 // PROFILE
 // ═══════════════════════════════════════════
 router.get('/profile', (req, res) => {
@@ -193,6 +547,17 @@ router.get('/knowledge', (req, res) => {
   res.json(rows);
 });
 
+// Overview of everything the agent currently knows — powers the Knowledge tab.
+// NOTE: declared before '/knowledge/:id' so "overview" isn't captured as an id.
+router.get('/knowledge/overview', (req, res) => {
+  const ws = req.workspace;
+  const kb = buildKnowledgeBase(ws);
+  const stateRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'kb_state'").get(ws);
+  let distilledAt = null;
+  try { distilledAt = stateRow ? (JSON.parse(stateRow.value).distilled_at || null) : null; } catch {}
+  res.json({ counts: kb.counts, last_distilled_at: distilledAt });
+});
+
 router.get('/knowledge/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM becca_knowledge_docs WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Document not found' });
@@ -215,6 +580,98 @@ router.post('/knowledge', (req, res) => {
 router.delete('/knowledge/:id', (req, res) => {
   db.prepare('DELETE FROM becca_knowledge_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════
+// KNOWLEDGE DISTILLATION — grow the agent's knowledge from recent activity.
+// Pulls chats + briefings since the last distill, extracts durable facts
+// with an LLM, dedupes against existing memories, and stores them so every
+// future conversation inherits what was learned.
+// ═══════════════════════════════════════════
+router.post('/knowledge/distill', async (req, res) => {
+  const ws = req.workspace;
+  try {
+    const stateRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'kb_state'").get(ws);
+    let state = {};
+    try { state = stateRow ? JSON.parse(stateRow.value) : {}; } catch {}
+    const since = state.distilled_at || new Date(Date.now() - 7 * 864e5).toISOString();
+
+    // Source 1: chat messages since the last distill
+    const chats = db.prepare("SELECT role, content FROM becca_chat_history WHERE workspace = ? AND created_at > ? ORDER BY created_at ASC LIMIT 120").all(ws, since);
+    // Source 2: briefings since the last distill (market knowledge)
+    const briefings = db.prepare('SELECT summary FROM becca_briefings WHERE workspace = ? AND created_at > ? ORDER BY created_at DESC LIMIT 3').all(ws, since);
+
+    if (!chats.length && !briefings.length) {
+      return res.json({ learned: [], message: 'Nothing new to learn yet.' });
+    }
+
+    const transcript = [
+      ...chats.map(m => `${m.role === 'user' ? 'USER' : 'HOMIN'}: ${m.content}`),
+      ...briefings.map(b => `BRIEFING: ${b.summary}`),
+    ].join('\n').slice(0, 12000);
+
+    const raw = await callGroq({
+      model: 'gpt-oss-120b',
+      temperature: 0.2,
+      maxTokens: 800,
+      system: 'You extract durable knowledge. Reply ONLY with a JSON array of short fact strings.',
+      user: `Below is a workspace's recent activity with an AI assistant. Extract durable facts worth remembering long-term: who the user is, their company and products, market/competitor facts, preferences, goals, decisions. Skip small talk and transient questions. Max 8 facts, each under 140 characters.
+
+${transcript}
+
+Reply as a JSON array like: ["fact one", "fact two"]`,
+    });
+
+    let facts = [];
+    const m = stripThink(raw).match(/\[[\s\S]*\]/);
+    if (m) { try { facts = JSON.parse(m[0]).map(f => String(f).trim()).filter(Boolean); } catch {} }
+    if (!facts.length) {
+      state.distilled_at = nowIso();
+      db.prepare("UPDATE becca_settings SET value = ? WHERE workspace = ? AND key = 'kb_state'").run(JSON.stringify(state), ws);
+      return res.json({ learned: [], message: 'No new durable facts found in recent activity.' });
+    }
+
+    // Dedupe against existing memories and within the batch
+    const existing = db.prepare('SELECT content FROM becca_memory WHERE workspace = ?').all(ws);
+    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    const seen = new Set(existing.map(r => norm(r.content)));
+    const insert = db.prepare('INSERT INTO becca_memory (id, workspace, content, created_at) VALUES (?,?,?,?)');
+    const learned = [];
+    for (const f of facts) {
+      const nf = norm(f);
+      if (!nf) continue;
+      if ([...seen].some(ne => ne === nf || ne.includes(nf) || nf.includes(ne))) continue;
+      insert.run(newId(), ws, f, nowIso());
+      seen.add(nf);
+      learned.push(f);
+    }
+
+    // Cap memory at 80 entries — drop the oldest beyond that
+    const cap = 80;
+    const count = db.prepare('SELECT COUNT(*) c FROM becca_memory WHERE workspace = ?').get(ws).c;
+    if (count > cap) {
+      const old = db.prepare('SELECT id FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC LIMIT ?').all(ws, count - cap);
+      for (const r of old) db.prepare('DELETE FROM becca_memory WHERE id = ? AND workspace = ?').run(r.id, ws);
+    }
+
+    state.distilled_at = nowIso();
+    const existingState = db.prepare("SELECT workspace FROM becca_settings WHERE workspace = ? AND key = 'kb_state'").get(ws);
+    if (existingState) {
+      db.prepare("UPDATE becca_settings SET value = ? WHERE workspace = ? AND key = 'kb_state'").run(JSON.stringify(state), ws);
+    } else {
+      db.prepare("INSERT INTO becca_settings (workspace, key, value) VALUES (?, 'kb_state', ?)").run(ws, JSON.stringify(state));
+    }
+
+    res.json({
+      learned,
+      considered: facts.length,
+      distilled_at: state.distilled_at,
+      message: learned.length ? `Homin learned ${learned.length} new thing${learned.length > 1 ? 's' : ''}.` : 'Everything was already known.',
+    });
+  } catch (err) {
+    console.error('knowledge/distill failed:', err.message);
+    res.status(502).json({ error: 'Could not distil knowledge right now.' });
+  }
 });
 
 // ═══════════════════════════════════════════
@@ -457,6 +914,84 @@ router.get('/chat/:sessionId', (req, res) => {
 });
 
 // ═══════════════════════════════════════════
+// CENTRAL KNOWLEDGE BASE — one snapshot of everything Homin knows about this
+// workspace. Every agent surface (chat, briefings, pipeline) should draw from
+// here instead of re-querying tables ad hoc.
+// ═══════════════════════════════════════════
+function buildKnowledgeBase(ws) {
+  const profile = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
+  const topics = db.prepare("SELECT name, context FROM becca_topics WHERE workspace = ? AND status = 'active' ORDER BY sort_order ASC").all(ws);
+  const memory = db.prepare('SELECT content FROM becca_memory WHERE workspace = ? ORDER BY created_at DESC LIMIT 40').all(ws).reverse();
+  const kbDocs = db.prepare('SELECT filename, content FROM becca_knowledge_docs WHERE workspace = ? ORDER BY created_at ASC LIMIT 10').all(ws);
+  const lastBriefing = db.prepare('SELECT summary, created_at FROM becca_briefings WHERE workspace = ? ORDER BY created_at DESC LIMIT 1').get(ws);
+  const settingsRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
+  let dailySettings = {};
+  try { dailySettings = settingsRow ? JSON.parse(settingsRow.value) : {}; } catch {}
+  const region = dailySettings.country || profile?.location || '';
+
+  // Personal block
+  let personalBlock = '';
+  if (profile) {
+    const parts = [];
+    if (profile.name) parts.push(`Name: ${profile.name}`);
+    if (profile.role) parts.push(`Role: ${profile.role}`);
+    if (profile.location) parts.push(`Location: ${profile.location}`);
+    if (profile.website) parts.push(`Website: ${profile.website}`);
+    let links = [];
+    try { links = JSON.parse(profile.links || '[]'); } catch {}
+    if (links.length) parts.push(`Trusted reference links:\n${links.map((l, i) => `${i + 1}. ${l}`).join('\n')}`);
+    if (profile.bio) parts.push(`Bio: ${profile.bio}`);
+    if (parts.length) personalBlock = parts.join('\n');
+  }
+
+  // Company block (from onboarding scan + manual edits)
+  let companyBlock = '';
+  if (profile) {
+    const parts = [];
+    if (profile.company_name) parts.push(`Company: ${profile.company_name}`);
+    if (profile.company_description) parts.push(`About: ${profile.company_description}`);
+    if (profile.company_size) parts.push(`Size: ${profile.company_size}`);
+    if (profile.target_market) parts.push(`Target market: ${profile.target_market}`);
+    if (profile.value_proposition) parts.push(`Value proposition: ${profile.value_proposition}`);
+    let products = [], competitors = [], industries = [];
+    try { products = JSON.parse(profile.key_products || '[]'); } catch {}
+    try { competitors = JSON.parse(profile.competitors || '[]'); } catch {}
+    try { industries = JSON.parse(profile.industries || '[]'); } catch {}
+    if (products.length) parts.push(`Key products/services: ${products.join(', ')}`);
+    if (competitors.length) parts.push(`Known competitors: ${competitors.join(', ')}`);
+    if (industries.length) parts.push(`Industries: ${industries.join(', ')}`);
+    if (parts.length) companyBlock = parts.join('\n');
+  }
+
+  return {
+    profile,
+    topics,
+    memory,
+    kbDocs,
+    lastBriefing,
+    region,
+    counts: {
+      profile: profile ? 1 : 0,
+      topics: topics.length,
+      memories: memory.length,
+      docs: kbDocs.length,
+      briefings: db.prepare('SELECT COUNT(*) c FROM becca_briefings WHERE workspace = ?').get(ws).c,
+    },
+    toPrompt() {
+      const sections = [];
+      if (personalBlock) sections.push(`User:\n${personalBlock}`);
+      if (companyBlock) sections.push(`Company context:\n${companyBlock}`);
+      if (region) sections.push(`Primary market/region: ${region} (scope research, news, and recommendations here unless the user asks for elsewhere)`);
+      if (topics.length) sections.push(`Watchlist topics:\n${topics.map(t => `- ${t.name}${t.context ? ': ' + t.context : ''}`).join('\n')}`);
+      if (lastBriefing) sections.push(`Latest briefing (${(lastBriefing.created_at || '').slice(0, 10)}):\n${String(lastBriefing.summary).slice(0, 800)}`);
+      if (memory.length) sections.push(`Learned knowledge & preferences:\n${memory.map(m => `- ${m.content}`).join('\n')}`);
+      if (kbDocs.length) sections.push(`Knowledge documents:\n${kbDocs.map(d => `[${d.filename}]\n${d.content.slice(0, 1500)}`).join('\n---\n')}`);
+      return sections.join('\n\n');
+    },
+  };
+}
+
+// ═══════════════════════════════════════════
 // EXPORT — full knowledge base (markdown)
 // ═══════════════════════════════════════════
 router.get('/export', (req, res) => {
@@ -567,60 +1102,17 @@ router.post('/chat/message', async (req, res) => {
       userId, ws, sessionId, 'user', message, now
     );
 
-    // Get context: topics, profile, memory, knowledge base
-    const topics = db.prepare('SELECT name, context FROM becca_topics WHERE workspace = ? ORDER BY sort_order ASC').all(ws);
-    const profile = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
-    const memory = db.prepare('SELECT content FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC LIMIT 20').all(ws);
+    // Get context: central knowledge base snapshot
+    const kb = buildKnowledgeBase(ws);
     const recentChat = db.prepare('SELECT role, content FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at DESC LIMIT 10').all(ws).reverse();
-    const kbDocs = db.prepare('SELECT filename, content FROM becca_knowledge_docs WHERE workspace = ? ORDER BY created_at ASC LIMIT 10').all(ws);
-
-    const settingsRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
-    let dailySettings = {};
-    try { dailySettings = settingsRow ? JSON.parse(settingsRow.value) : {}; } catch {}
-    const region = dailySettings.country || profile?.location || '';
-
-    const topicList = topics.map(t => `- ${t.name}${t.context ? ': ' + t.context : ''}`).join('\n');
-    const memoryList = memory.map(m => `- ${m.content}`).join('\n');
     const chatContext = recentChat.map(m => `${m.role}: ${m.content}`).join('\n');
-
-    // Parse JSON fields from profile (DB stores them as strings)
-    const profileLinks = JSON.parse(profile?.links || '[]');
-    const profileProducts = JSON.parse(profile?.key_products || '[]');
-    const profileCompetitors = JSON.parse(profile?.competitors || '[]');
-
-    // Build company context block
-    let companyContext = '';
-    if (profile) {
-      const parts = [];
-      if (profile.company_name) parts.push(`Company: ${profile.company_name}`);
-      if (profile.company_description) parts.push(`About: ${profile.company_description}`);
-      if (profile.company_size) parts.push(`Size: ${profile.company_size}`);
-      if (profile.target_market) parts.push(`Target market: ${profile.target_market}`);
-      if (profile.value_proposition) parts.push(`Value proposition: ${profile.value_proposition}`);
-      if (profileProducts.length) parts.push(`Key products/services: ${profileProducts.join(', ')}`);
-      if (profileCompetitors.length) parts.push(`Competitors: ${profileCompetitors.join(', ')}`);
-      if (parts.length) companyContext = `\nCompany context:\n${parts.join('\n')}\n`;
-    }
-
-    // Build knowledge base context
-    let kbContext = '';
-    if (kbDocs.length) {
-      kbContext = `\nKnowledge base documents (reference these when answering questions about the company):\n${kbDocs.map(d => `[${d.filename}]\n${d.content.slice(0, 2000)}`).join('\n---\n')}\n`;
-    }
+    const knowledgeContext = kb.toPrompt();
 
     // Intent detection + response
     const systemPrompt = `You are Homin, a personal intelligence assistant. You help with research, content creation, and task management.
 
-Current user profile: ${profile ? `${profile.name || 'Unknown'}, ${profile.role || ''}, ${profile.location || ''}` : 'Not set up yet'}
-User's region/country (scope research, news, and recommendations here unless the user asks for elsewhere): ${region || 'unspecified'}
-User's website: ${profile?.website || 'none'}
-Reference links the user trusts (use these as context/sources when relevant):
-${profileLinks.length ? profileLinks.map((l, i) => `- ${i + 1}. ${l}`).join('\n') : 'none'}
-${companyContext}${kbContext}
-Tracked topics:
-${topicList || 'No topics tracked yet'}
-Memory:
-${memoryList || 'No memories stored'}
+Everything you know about this user:
+${knowledgeContext || 'Not set up yet — ask about their company if relevant.'}
 
 Recent conversation:
 ${chatContext}
@@ -713,7 +1205,7 @@ Always reply naturally and helpfully. Be concise.`;
         const parsed = JSON.parse(jsonStr);
         reply = stripThink(parsed.reply || text);
         if (parsed.action && parsed.action !== 'CHAT') {
-          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, region);
+          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, kb.region);
         }
       }
     } catch {}
@@ -728,7 +1220,7 @@ Always reply naturally and helpfully. Be concise.`;
       if (removeMatch) {
         let topicName = removeMatch[1].replace(/[.!?]+$/, '').trim();
         if (topicName) {
-          actionResult = await executeAction('REMOVE_TOPIC', { name: topicName }, ws, model, region);
+          actionResult = await executeAction('REMOVE_TOPIC', { name: topicName }, ws, model, kb.region);
           reply = actionResult;
         }
       }
@@ -762,7 +1254,7 @@ Always reply naturally and helpfully. Be concise.`;
           let topicName = addMatch[1].replace(/[.!?]+$/, '')
             .replace(/\s+(?:going forward|for me|regularly|from now on).*$/i, '').trim();
           if (topicName) {
-            actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
+            actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region);
             reply = actionResult;
           }
         }
@@ -773,7 +1265,7 @@ Always reply naturally and helpfully. Be concise.`;
       const searchMatch = lower.match(/(?:search|look up|find|google|research|check)\s+(?:for\s+)?(.+)/i);
       if (searchMatch) {
         const query = searchMatch[1].replace(/[.!?]+$/, '').trim();
-        actionResult = await executeAction('SEARCH', { query }, ws, model, region);
+        actionResult = await executeAction('SEARCH', { query }, ws, model, kb.region);
         reply = actionResult;
       }
     }
@@ -782,7 +1274,7 @@ Always reply naturally and helpfully. Be concise.`;
       const pipelineMatch = lower.match(/(?:turn|make|write|create|convert)\s+(?:this|that|it|the(?:se)?\s+results?)\s+(?:into|as|to)\s+(?:a\s+)?(?:blog\s*post|article|post|draft|content)/i);
       if (pipelineMatch) {
         const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, region);
+        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region);
         reply = actionResult;
       }
     }
@@ -819,7 +1311,7 @@ Always reply naturally and helpfully. Be concise.`;
         // Clean up common trailing phrases
         topicName = topicName.replace(/\s+(?:covering|including|and related|related).+$/i, '').trim();
         if (topicName) {
-          actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, region);
+          actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region);
           reply = actionResult;
         }
       }
@@ -835,20 +1327,20 @@ Always reply naturally and helpfully. Be concise.`;
         // Extract just the search query, stripping pipeline-related text
         let query = message.replace(/^(?:search|look up|find|google|research|check)\s+(?:for\s+)?/i, '').replace(/[.!?]+$/, '').trim();
         query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
-        actionResult = await executeAction('SEARCH', { query: query || message }, ws, model, region);
+        actionResult = await executeAction('SEARCH', { query: query || message }, ws, model, kb.region);
         reply = actionResult;
       }
       // If user also wants pipeline after search, queue it
       if (wantsPipeline && wantsSearch) {
         try {
           const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-          const pipelineResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, region);
+          const pipelineResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region);
           reply += '\n\n' + pipelineResult;
           actionResult = pipelineResult;
         } catch { /* pipeline may fail if server self-call times out */ }
       } else if (wantsPipeline && !wantsSearch) {
         const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, region);
+        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region);
         reply = actionResult;
       }
     }

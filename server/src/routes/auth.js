@@ -32,7 +32,7 @@ router.post('/login', (req, res) => {
   }
   const user = getUserByEmail(email);
   if (!user) {
-    return res.status(401).json({ error: 'Invalid email or password' });
+    return res.status(404).json({ error: 'No account with that email yet', code: 'NO_ACCOUNT' });
   }
   if (!verifyPassword(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid email or password' });

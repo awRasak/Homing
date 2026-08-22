@@ -1,7 +1,7 @@
 const BASE = import.meta.env.VITE_API_BASE || '/api';
 
-async function handle(res) {
-  if (res.status === 401) {
+async function handle(res, fromAuth = false) {
+  if (res.status === 401 && !fromAuth) {
     // Token expired or invalid — clear auth state
     localStorage.removeItem('homing_token');
     window.dispatchEvent(new Event('auth:logout'));
@@ -9,13 +9,18 @@ async function handle(res) {
   }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let code = '';
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
+      if (body?.code) code = body.code;
     } catch {
       /* ignore */
     }
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = res.status;
+    err.code = code;
+    throw err;
   }
   if (res.status === 204) return null;
   return res.json();
@@ -56,13 +61,13 @@ export const auth = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: jsonBody({ email, password, name }),
-    }).then(handle),
+    }).then((res) => handle(res, true)),
   login: (email, password) =>
     fetch(`${BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: jsonBody({ email, password }),
-    }).then(handle),
+    }).then((res) => handle(res, true)),
   me: () =>
     fetch(`${BASE}/auth/me`, { headers: authHeaders() }).then(handle),
 };
@@ -219,6 +224,10 @@ export const api = {
   becca: {
     getProfile: () =>
       fetch(`${BASE}/becca/profile`, { headers: authHeaders() }).then(handle),
+    scanCompany: (url) =>
+      fetch(`${BASE}/becca/scan-company`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody({ url }),
+      }).then(handle),
     saveProfile: (data) =>
       fetch(`${BASE}/becca/profile`, {
         method: 'PUT', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
@@ -240,6 +249,12 @@ export const api = {
       }).then(handle),
     deleteKnowledgeDoc: (id) =>
       fetch(`${BASE}/becca/knowledge/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handle),
+    knowledgeOverview: () =>
+      fetch(`${BASE}/becca/knowledge/overview`, { headers: authHeaders() }).then(handle),
+    distillKnowledge: () =>
+      fetch(`${BASE}/becca/knowledge/distill`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody({}),
+      }).then(handle),
 
     listTopics: () =>
       fetch(`${BASE}/becca/topics`, { headers: authHeaders() }).then(handle),

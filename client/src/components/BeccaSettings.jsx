@@ -60,6 +60,9 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
   const [docFilename, setDocFilename] = useState('');
   const [docContent, setDocContent] = useState('');
   const [memInput, setMemInput] = useState('');
+  const [kbOverview, setKbOverview] = useState(null);
+  const [distilling, setDistilling] = useState(false);
+  const [distillResult, setDistillResult] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -94,6 +97,9 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     let alive = true;
     api.becca.listKnowledge()
       .then(data => { if (alive) setKnowledge(Array.isArray(data) ? data : (data.docs || [])); })
+      .catch(() => {});
+    api.becca.knowledgeOverview()
+      .then(data => { if (alive) setKbOverview(data); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -130,6 +136,23 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     if (!val) return;
     onAddMemory(val);
     setMemInput('');
+  }
+
+  async function handleDistill() {
+    if (distilling) return;
+    setDistilling(true);
+    setDistillResult(null);
+    try {
+      const data = await api.becca.distillKnowledge();
+      setDistillResult(data);
+      const overview = await api.becca.knowledgeOverview();
+      setKbOverview(overview);
+      if (onRefreshMemory) onRefreshMemory();
+    } catch {
+      alert('Could not distil knowledge — try again.');
+    } finally {
+      setDistilling(false);
+    }
   }
 
   async function handleExport() {
@@ -287,6 +310,42 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
           {tab === 'knowledge' && (
             <div className={`modal-tab-panel${tab === 'knowledge' ? ' active' : ''}`}>
               <div className="settings-section">
+                <div className="settings-section-title">What Homin Knows</div>
+                <div className="modal-desc" style={{ marginBottom: 10 }}>Every source below feeds Homin's knowledge in every conversation.</div>
+                <div className="kb-overview-row">
+                  {[
+                    ['Company profile', kbOverview?.counts?.profile],
+                    ['Watchlist topics', kbOverview?.counts?.topics],
+                    ['Learned facts', kbOverview?.counts?.memories],
+                    ['Documents', kbOverview?.counts?.docs],
+                    ['Briefings', kbOverview?.counts?.briefings],
+                  ].map(([label, count]) => (
+                    <div key={label} className="kb-overview-card">
+                      <div className="kb-overview-num">{count ?? '—'}</div>
+                      <div className="kb-overview-label">{label}</div>
+                    </div>
+                  ))}
+                </div>
+                {kbOverview?.last_distilled_at && (
+                  <div className="modal-desc" style={{ marginTop: 8, opacity: 0.7 }}>
+                    Last learned from activity: {new Date(kbOverview.last_distilled_at).toLocaleString()}
+                  </div>
+                )}
+                <div className="add-row" style={{ marginTop: 12 }}>
+                  <button className="btn-add-topic" onClick={handleDistill} disabled={distilling} style={{ width: 'auto', padding: '0.5rem 1rem' }}>
+                    {distilling ? 'Learning…' : '✦ Teach Homin from recent activity'}
+                  </button>
+                </div>
+                {distillResult && (
+                  <div className="kb-distill-result">
+                    <div className="modal-desc" style={{ marginBottom: 6 }}>{esc(distillResult.message || '')}</div>
+                    {(distillResult.learned || []).map((f, i) => (
+                      <div key={i} className="memory-pill">{esc(f)}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="settings-section" style={{ marginTop: 16 }}>
                 <div className="settings-section-title">Uploaded Documents</div>
                 <div className="modal-desc" style={{ marginBottom: 10 }}>Documents Homin references when answering questions about your business.</div>
                 <div className="memory-pills-wrap">

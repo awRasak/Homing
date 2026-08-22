@@ -1867,6 +1867,39 @@ input.pf-input:focus {
 .memory-pill .mp-del:hover { color: #e05050; }
 .memory-pills-wrap { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 
+/* Knowledge-base overview (settings → knowledge tab) */
+.kb-overview-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.kb-overview-card {
+  flex: 1 1 90px;
+  min-width: 90px;
+  background: var(--surface2);
+  border: 1.5px solid var(--grey-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.kb-overview-num {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.kb-overview-label {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--grey-mid);
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+.kb-distill-result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1.5px solid var(--grey-border);
+  border-radius: 12px;
+}
+.kb-distill-result .memory-pills-wrap, .kb-distill-result .memory-pill { margin-top: 6px; }
+
 .quiet-row {
   display: flex;
   align-items: center;
