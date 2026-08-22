@@ -21,8 +21,8 @@
 }
 
 .auth-card {
-  background: var(--surface);
-  border: 1px solid var(--grey-border);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 2.5rem 2rem;
   width: 100%;
@@ -40,7 +40,7 @@
   font-size: 1.5rem;
   font-weight: 700;
   margin: 0 0 0.25rem;
-  color: var(--ink);
+  color: var(--text);
 }
 
 .auth-sub {
@@ -55,6 +55,21 @@
   gap: 0.75rem;
 }
 
+.auth-input {
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--grey-border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.auth-input:focus {
+  border-color: var(--green);
+}
+
 .auth-error {
   color: #ef4444;
   font-size: 0.8rem;
@@ -65,8 +80,8 @@
   padding: 0.625rem;
   border-radius: 8px;
   border: none;
-  background: var(--green);
-  color: var(--ink);
+  background: var(--accent);
+  color: #fff;
   font-weight: 600;
   font-size: 0.875rem;
   cursor: pointer;
@@ -81,7 +96,7 @@
   margin-top: 1rem;
   background: none;
   border: none;
-  color: var(--green-dark);
+  color: var(--accent);
   font-size: 0.8rem;
   cursor: pointer;
   padding: 0;
