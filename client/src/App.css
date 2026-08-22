@@ -76,6 +76,15 @@
   -webkit-text-fill-color: var(--ink) !important;
   caret-color: var(--ink);
   transition: background-color 5000s ease-in-out 0s;
+  border-color: var(--grey-border);
+}
+
+.auth-input:-webkit-autofill:focus,
+.auth-input:autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  -webkit-text-fill-color: var(--ink) !important;
+  caret-color: var(--ink);
+  border-color: var(--green) !important;
 }
 
 .auth-error {
@@ -93,7 +102,12 @@
   font-weight: 600;
   font-size: 0.875rem;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background-color 0.2s, color 0.2s, opacity 0.15s;
+}
+
+.auth-submit.auth-submit-ready {
+  background: var(--green);
+  color: var(--green-text);
 }
 
 .auth-submit:hover {
