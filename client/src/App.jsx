@@ -19,6 +19,8 @@ import HistoryList from './components/HistoryList';
 import { buildProposalPdf, downloadPdfBytes } from './lib/buildEditedPdf';
 import BeccaLayout from './components/BeccaLayout';
 import BeccaSettings from './components/BeccaSettings';
+import CompanyOnboarding from './components/CompanyOnboarding';
+import DesignEditor from './components/design/DesignEditor';
 import './App.css';
 
 const DEFAULT_FONT = 'Inter';
@@ -31,6 +33,7 @@ const SECTION_META = {
   campaigns: { name: 'Campaigns', status: 'Send proposals at scale' },
   dashboard: { name: 'Dashboard', status: 'Your saved proposals' },
   becca: { name: 'Homin', status: 'Personal Intelligence Assistant' },
+  design: { name: 'Design', status: 'AI-powered canvas editor' },
   settings: { name: 'Settings', status: 'Coming soon' },
 };
 
@@ -78,6 +81,7 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
+  const [authHint, setAuthHint] = useState('');
 
   const bootstrapped = useRef(false);
   const saveTimers = useRef({});
@@ -596,6 +600,7 @@ export default function App() {
   async function handleAuthSubmit(e) {
     e.preventDefault();
     setAuthError('');
+    setAuthHint('');
     try {
       const result = authMode === 'login'
         ? await auth.login(authEmail, authPassword)
@@ -607,7 +612,14 @@ export default function App() {
       if (authMode === 'signup') setShowCompanySetup(true);
       else maybeGreetOnLogin(result.user, workspace);
     } catch (err) {
-      setAuthError(err.message);
+      if (authMode === 'login' && err.code === 'NO_ACCOUNT') {
+        // Unknown email on sign-in → flow straight into signup with what they typed.
+        setAuthError('');
+        setAuthHint(`No account for ${authEmail.trim()} yet — add your name to create it.`);
+        setAuthMode('signup');
+      } else {
+        setAuthError(err.message);
+      }
     }
   }
 
@@ -645,6 +657,7 @@ export default function App() {
   function handleAuthSwitch() {
     setAuthMode(prev => prev === 'login' ? 'signup' : 'login');
     setAuthError('');
+    setAuthHint('');
   }
 
   useEffect(() => {
@@ -693,6 +706,14 @@ export default function App() {
   if (!authUser) {
     return (
       <div className="auth-screen">
+        <button
+          type="button"
+          className="theme-toggle auth-screen-toggle"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          onClick={toggleTheme}
+        >
+          <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="theme-toggle-img" />
+        </button>
         <div className="auth-card">
           <img src="/icons/logomark.png" alt="Homin" className="auth-logo" />
           <h1 className="auth-title">{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
@@ -706,6 +727,7 @@ export default function App() {
               value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
             <input placeholder="Password" className="auth-input" type="text"
               value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
+            {authHint && <div className="auth-hint">{authHint}</div>}
             {authError && <div className="auth-error">{authError}</div>}
             <button
               type="submit"
@@ -1012,6 +1034,10 @@ export default function App() {
               {proposalTab === 'dashboard' && <Dashboard proposals={allProposals} loading={dashboardLoading} onContinue={handleContinueProposal} />}
             </div>
           </div>
+        ) : section === 'design' ? (
+          <div className="section-body design-section">
+            <DesignEditor />
+          </div>
         ) : (
           <div className="section-body">
             <ComingSoon {...COMING_SOON_COPY[section]} />
@@ -1038,17 +1064,22 @@ export default function App() {
         activeProvider={activeProvider}
       />
 
-      {(beccaSettingsOpen || showCompanySetup) && (
-        <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
-          onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}
-          onSaveSettings={handleBeccaSaveSettings}
-          onComplete={showCompanySetup ? handleCompanySetupComplete : undefined}
+      {showCompanySetup && (
+        <CompanyOnboarding
+          onSave={handleBeccaSaveProfile}
+          onComplete={handleCompanySetupComplete}
           onClose={() => {
-            setBeccaSettingsOpen(false);
             setShowCompanySetup(false);
             setSection('becca');
             setBeccaSection('chat');
           }} />
+      )}
+
+      {beccaSettingsOpen && (
+        <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
+          onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}
+          onSaveSettings={handleBeccaSaveSettings}
+          onClose={() => setBeccaSettingsOpen(false)} />
       )}
 
       {setupPhase && (

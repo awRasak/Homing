@@ -1,6 +1,7 @@
 const NAV_ITEMS = [
   { id: 'becca', icon: '/icons/robot.png', title: 'Homin' },
   { id: 'proposals', icon: '/icons/file-text.png', title: 'Proposals' },
+  { id: 'design', icon: '/icons/pencil.png', title: 'Design' },
 ];
 
 export default function NavRail({ section, onNavigate, onOpenProfile }) {
