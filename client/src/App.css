@@ -73,18 +73,28 @@
 .auth-input:-webkit-autofill,
 .auth-input:autofill {
   -webkit-box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  box-shadow: 0 0 0 1000px var(--bg) inset !important;
   -webkit-text-fill-color: var(--ink) !important;
   caret-color: var(--ink);
-  transition: background-color 5000s ease-in-out 0s;
+  transition: background-color 5000s ease-in-out 0s, border-color 0.15s;
   border-color: var(--grey-border);
+  outline: none !important;
+  font-size: 0.875rem;
+  letter-spacing: normal;
+  font-weight: normal;
 }
 
 .auth-input:-webkit-autofill:focus,
 .auth-input:autofill:focus {
   -webkit-box-shadow: 0 0 0 1000px var(--bg) inset !important;
+  box-shadow: 0 0 0 1000px var(--bg) inset !important;
   -webkit-text-fill-color: var(--ink) !important;
   caret-color: var(--ink);
   border-color: var(--green) !important;
+  outline: none !important;
+  font-size: 0.875rem;
+  letter-spacing: normal;
+  font-weight: normal;
 }
 
 .auth-error {
