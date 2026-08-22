@@ -56,38 +56,35 @@ CREATE INDEX IF NOT EXISTS idx_proposals_design ON proposals(design_id);
 
 // Lightweight migration: add columns introduced after the initial CREATE TABLE
 // to any pre-existing designs table (CREATE TABLE IF NOT EXISTS won't do this).
-const existingColumns = new Set(db.prepare('PRAGMA table_info(designs)').all().map((c) => c.name));
-const newColumns = [
-  ['source_image_data_url', 'TEXT'],
-  ['source_image_width', 'INTEGER'],
-  ['source_image_height', 'INTEGER'],
-  ["source_text_blocks", "TEXT NOT NULL DEFAULT '[]'"],
-  ["text_overrides", "TEXT NOT NULL DEFAULT '{}'"],
-  ["pages", "TEXT NOT NULL DEFAULT '[]'"],
-  ["page_overrides", "TEXT NOT NULL DEFAULT '{}'"],
-  ["source_pdf_path", "TEXT"],
-];
-for (const [name, def] of newColumns) {
-  if (!existingColumns.has(name)) {
-    db.exec(`ALTER TABLE designs ADD COLUMN ${name} ${def}`);
+try {
+  const existingColumns = new Set(db.prepare('PRAGMA table_info(designs)').all().map((c) => c.name));
+  const newColumns = [
+    ['source_image_data_url', 'TEXT'],
+    ['source_image_width', 'INTEGER'],
+    ['source_image_height', 'INTEGER'],
+    ["source_text_blocks", "TEXT NOT NULL DEFAULT '[]'"],
+    ["text_overrides", "TEXT NOT NULL DEFAULT '{}'"],
+    ["pages", "TEXT NOT NULL DEFAULT '[]'"],
+    ["page_overrides", "TEXT NOT NULL DEFAULT '{}'"],
+    ["source_pdf_path", "TEXT"],
+  ];
+  for (const [name, def] of newColumns) {
+    if (!existingColumns.has(name)) {
+      db.exec(`ALTER TABLE designs ADD COLUMN ${name} ${def}`);
+    }
   }
-}
-
-const crColumns = new Set(db.prepare('PRAGMA table_info(campaign_recipients)').all().map((c) => c.name));
-const crNewColumns = [
-  ['created_at', 'TEXT'],
-  ['updated_at', 'TEXT'],
-];
-for (const [name, def] of crNewColumns) {
-  if (!crColumns.has(name)) {
-    db.exec(`ALTER TABLE campaign_recipients ADD COLUMN ${name} ${def}`);
-  }
+} catch (e) {
+  console.warn('[DB] Skipping designs migration:', e.message);
 }
 
 // Migration: add company_logo to proposals
-const propColumns = new Set(db.prepare('PRAGMA table_info(proposals)').all().map((c) => c.name));
-if (!propColumns.has('company_logo')) {
-  db.exec(`ALTER TABLE proposals ADD COLUMN company_logo TEXT`);
+try {
+  const propColumns = new Set(db.prepare('PRAGMA table_info(proposals)').all().map((c) => c.name));
+  if (!propColumns.has('company_logo')) {
+    db.exec(`ALTER TABLE proposals ADD COLUMN company_logo TEXT`);
+  }
+} catch (e) {
+  console.warn('[DB] Skipping proposals migration:', e.message);
 }
 
 db.exec(`
@@ -227,35 +224,43 @@ CREATE INDEX IF NOT EXISTS idx_becca_chat_workspace ON becca_chat_history(worksp
 `);
 
 // Migration: add session_id to existing becca_chat_history
-const chatColumns = new Set(db.prepare('PRAGMA table_info(becca_chat_history)').all().map((c) => c.name));
-if (!chatColumns.has('session_id')) {
-  db.exec(`ALTER TABLE becca_chat_history ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
+try {
+  const chatColumns = new Set(db.prepare('PRAGMA table_info(becca_chat_history)').all().map((c) => c.name));
+  if (!chatColumns.has('session_id')) {
+    db.exec(`ALTER TABLE becca_chat_history ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`);
+  }
+} catch (e) {
+  console.warn('[DB] Skipping chat_history migration:', e.message);
 }
 
 // Migration: add website + links to existing becca_profile
-const profileColumns = new Set(db.prepare('PRAGMA table_info(becca_profile)').all().map((c) => c.name));
-if (!profileColumns.has('website')) {
-  db.exec(`ALTER TABLE becca_profile ADD COLUMN website TEXT NOT NULL DEFAULT ''`);
-}
-if (!profileColumns.has('links')) {
-  db.exec(`ALTER TABLE becca_profile ADD COLUMN links TEXT NOT NULL DEFAULT '[]'`);
-}
-
-// Migration: add business profile fields
-const bizFields = [
-  ['company_name', "TEXT NOT NULL DEFAULT ''"],
-  ['company_description', "TEXT NOT NULL DEFAULT ''"],
-  ['company_size', "TEXT NOT NULL DEFAULT ''"],
-  ['key_products', "TEXT NOT NULL DEFAULT '[]'"],
-  ['competitors', "TEXT NOT NULL DEFAULT '[]'"],
-  ['target_market', "TEXT NOT NULL DEFAULT ''"],
-  ['value_proposition', "TEXT NOT NULL DEFAULT ''"],
-  ['knowledge_base', "TEXT NOT NULL DEFAULT '[]'"],
-];
-for (const [name, def] of bizFields) {
-  if (!profileColumns.has(name)) {
-    db.exec(`ALTER TABLE becca_profile ADD COLUMN ${name} ${def}`);
+try {
+  const profileColumns = new Set(db.prepare('PRAGMA table_info(becca_profile)').all().map((c) => c.name));
+  if (!profileColumns.has('website')) {
+    db.exec(`ALTER TABLE becca_profile ADD COLUMN website TEXT NOT NULL DEFAULT ''`);
   }
+  if (!profileColumns.has('links')) {
+    db.exec(`ALTER TABLE becca_profile ADD COLUMN links TEXT NOT NULL DEFAULT '[]'`);
+  }
+
+  // Migration: add business profile fields
+  const bizFields = [
+    ['company_name', "TEXT NOT NULL DEFAULT ''"],
+    ['company_description', "TEXT NOT NULL DEFAULT ''"],
+    ['company_size', "TEXT NOT NULL DEFAULT ''"],
+    ['key_products', "TEXT NOT NULL DEFAULT '[]'"],
+    ['competitors', "TEXT NOT NULL DEFAULT '[]'"],
+    ['target_market', "TEXT NOT NULL DEFAULT ''"],
+    ['value_proposition', "TEXT NOT NULL DEFAULT ''"],
+    ['knowledge_base', "TEXT NOT NULL DEFAULT '[]'"],
+  ];
+  for (const [name, def] of bizFields) {
+    if (!profileColumns.has(name)) {
+      db.exec(`ALTER TABLE becca_profile ADD COLUMN ${name} ${def}`);
+    }
+  }
+} catch (e) {
+  console.warn('[DB] Skipping profile migration:', e.message);
 }
 
 // Knowledge base documents table
@@ -308,24 +313,28 @@ CREATE INDEX IF NOT EXISTS idx_becca_posts_topic ON becca_posts(topic_name);
 // ═══════════════════════════════════════════
 
 // Migrate becca_topics: add new columns for watchlist features
-const topicCols = new Set(db.prepare('PRAGMA table_info(becca_topics)').all().map(c => c.name));
-const topicMigrations = [
-  ['normalized_topic', 'TEXT NOT NULL DEFAULT ""'],
-  ['status', "TEXT NOT NULL DEFAULT 'active'"],
-  ['blog_generation_enabled', 'INTEGER NOT NULL DEFAULT 0'],
-  ['last_briefed_at', 'TEXT'],
-  ['last_blog_generated_at', 'TEXT'],
-  ['last_fetch_status', "TEXT NOT NULL DEFAULT 'pending'"],
-  ['last_fetch_error', 'TEXT'],
-  ['consecutive_fetch_failures', 'INTEGER NOT NULL DEFAULT 0'],
-];
-for (const [name, def] of topicMigrations) {
-  if (!topicCols.has(name)) {
-    db.exec(`ALTER TABLE becca_topics ADD COLUMN ${name} ${def}`);
+try {
+  const topicCols = new Set(db.prepare('PRAGMA table_info(becca_topics)').all().map(c => c.name));
+  const topicMigrations = [
+    ['normalized_topic', 'TEXT NOT NULL DEFAULT ""'],
+    ['status', "TEXT NOT NULL DEFAULT 'active'"],
+    ['blog_generation_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+    ['last_briefed_at', 'TEXT'],
+    ['last_blog_generated_at', 'TEXT'],
+    ['last_fetch_status', "TEXT NOT NULL DEFAULT 'pending'"],
+    ['last_fetch_error', 'TEXT'],
+    ['consecutive_fetch_failures', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [name, def] of topicMigrations) {
+    if (!topicCols.has(name)) {
+      db.exec(`ALTER TABLE becca_topics ADD COLUMN ${name} ${def}`);
+    }
   }
+  // Backfill normalized_topic for existing rows
+  db.exec(`UPDATE becca_topics SET normalized_topic = LOWER(TRIM(name)) WHERE normalized_topic = ''`);
+} catch (e) {
+  console.warn('[DB] Skipping topics migration:', e.message);
 }
-// Backfill normalized_topic for existing rows
-db.exec(`UPDATE becca_topics SET normalized_topic = LOWER(TRIM(name)) WHERE normalized_topic = ''`);
 
 // Recreate becca_briefings with new schema (old schema had 0 rows)
 db.exec(`DROP TABLE IF EXISTS becca_briefings`);
@@ -360,6 +369,23 @@ CREATE INDEX IF NOT EXISTS idx_becca_blog_drafts_workspace ON becca_blog_drafts(
 CREATE INDEX IF NOT EXISTS idx_becca_blog_drafts_topic ON becca_blog_drafts(watchlist_item_id);
 CREATE INDEX IF NOT EXISTS idx_becca_blog_drafts_status ON becca_blog_drafts(status);
 `);
+
+// ── Migrations that depend on tables created above ──
+// Wrapped in try/catch so a missing table never crashes the server.
+try {
+  const crColumns = new Set(db.prepare('PRAGMA table_info(campaign_recipients)').all().map((c) => c.name));
+  const crNewColumns = [
+    ['created_at', 'TEXT'],
+    ['updated_at', 'TEXT'],
+  ];
+  for (const [name, def] of crNewColumns) {
+    if (!crColumns.has(name)) {
+      db.exec(`ALTER TABLE campaign_recipients ADD COLUMN ${name} ${def}`);
+    }
+  }
+} catch (e) {
+  console.warn('[DB] Skipping campaign_recipients migration:', e.message);
+}
 
 export function nowIso() {
   return new Date().toISOString();
