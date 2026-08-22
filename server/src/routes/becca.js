@@ -146,6 +146,8 @@ router.get('/profile', (req, res) => {
     industries: JSON.parse(row.industries || '[]'),
     usecases: JSON.parse(row.usecases || '[]'),
     links: JSON.parse(row.links || '[]'),
+    key_products: JSON.parse(row.key_products || '[]'),
+    competitors: JSON.parse(row.competitors || '[]'),
   });
 });
 
@@ -155,21 +157,63 @@ router.put('/profile', (req, res) => {
   const now = nowIso();
   const website = (req.body.website || '').trim();
   const links = (req.body.links || []).filter(Boolean);
+  const key_products = (req.body.key_products || []).filter(Boolean);
+  const competitors = (req.body.competitors || []).filter(Boolean);
+  const b = req.body;
   if (existing) {
-    db.prepare(`UPDATE becca_profile SET name=?, role=?, location=?, website=?, links=?, bio=?, industries=?, usecases=?, updated_at=? WHERE workspace=?`).run(
-      req.body.name || '', req.body.role || '', req.body.location || '', website,
-      JSON.stringify(links), req.body.bio || '',
-      JSON.stringify(req.body.industries || []), JSON.stringify(req.body.usecases || []),
+    db.prepare(`UPDATE becca_profile SET name=?, role=?, location=?, website=?, links=?, bio=?, industries=?, usecases=?, company_name=?, company_description=?, company_size=?, key_products=?, competitors=?, target_market=?, value_proposition=?, updated_at=? WHERE workspace=?`).run(
+      b.name || '', b.role || '', b.location || '', website,
+      JSON.stringify(links), b.bio || '',
+      JSON.stringify(b.industries || []), JSON.stringify(b.usecases || []),
+      b.company_name || '', b.company_description || '', b.company_size || '',
+      JSON.stringify(key_products), JSON.stringify(competitors),
+      b.target_market || '', b.value_proposition || '',
       now, ws
     );
   } else {
-    db.prepare(`INSERT INTO becca_profile (id, workspace, name, role, location, website, links, bio, industries, usecases, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      newId(), ws, req.body.name || '', req.body.role || '', req.body.location || '', website,
-      JSON.stringify(links), req.body.bio || '',
-      JSON.stringify(req.body.industries || []), JSON.stringify(req.body.usecases || []),
+    db.prepare(`INSERT INTO becca_profile (id, workspace, name, role, location, website, links, bio, industries, usecases, company_name, company_description, company_size, key_products, competitors, target_market, value_proposition, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      newId(), ws, b.name || '', b.role || '', b.location || '', website,
+      JSON.stringify(links), b.bio || '',
+      JSON.stringify(b.industries || []), JSON.stringify(b.usecases || []),
+      b.company_name || '', b.company_description || '', b.company_size || '',
+      JSON.stringify(key_products), JSON.stringify(competitors),
+      b.target_market || '', b.value_proposition || '',
       now, now
     );
   }
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════
+// KNOWLEDGE BASE DOCUMENTS
+// ═══════════════════════════════════════════
+router.get('/knowledge', (req, res) => {
+  const ws = req.query.workspace || 'default';
+  const rows = db.prepare('SELECT id, workspace, filename, doc_type, created_at FROM becca_knowledge_docs WHERE workspace = ? ORDER BY created_at DESC').all(ws);
+  res.json(rows);
+});
+
+router.get('/knowledge/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM becca_knowledge_docs WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Document not found' });
+  res.json(row);
+});
+
+router.post('/knowledge', (req, res) => {
+  const ws = req.body.workspace || 'default';
+  const filename = (req.body.filename || '').trim();
+  const content = (req.body.content || '').trim();
+  const docType = req.body.doc_type || 'text';
+  if (!filename || !content) return res.status(400).json({ error: 'Filename and content required' });
+  const id = newId();
+  db.prepare('INSERT INTO becca_knowledge_docs (id, workspace, filename, content, doc_type, created_at) VALUES (?,?,?,?,?,?)').run(
+    id, ws, filename, content, docType, nowIso()
+  );
+  res.json({ id, ok: true });
+});
+
+router.delete('/knowledge/:id', (req, res) => {
+  db.prepare('DELETE FROM becca_knowledge_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -523,11 +567,12 @@ router.post('/chat/message', async (req, res) => {
       userId, ws, sessionId, 'user', message, now
     );
 
-    // Get context: topics, profile, memory
+    // Get context: topics, profile, memory, knowledge base
     const topics = db.prepare('SELECT name, context FROM becca_topics WHERE workspace = ? ORDER BY sort_order ASC').all(ws);
     const profile = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
     const memory = db.prepare('SELECT content FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC LIMIT 20').all(ws);
     const recentChat = db.prepare('SELECT role, content FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at DESC LIMIT 10').all(ws).reverse();
+    const kbDocs = db.prepare('SELECT filename, content FROM becca_knowledge_docs WHERE workspace = ? ORDER BY created_at ASC LIMIT 10').all(ws);
 
     const settingsRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
     let dailySettings = {};
@@ -538,6 +583,31 @@ router.post('/chat/message', async (req, res) => {
     const memoryList = memory.map(m => `- ${m.content}`).join('\n');
     const chatContext = recentChat.map(m => `${m.role}: ${m.content}`).join('\n');
 
+    // Parse JSON fields from profile (DB stores them as strings)
+    const profileLinks = JSON.parse(profile?.links || '[]');
+    const profileProducts = JSON.parse(profile?.key_products || '[]');
+    const profileCompetitors = JSON.parse(profile?.competitors || '[]');
+
+    // Build company context block
+    let companyContext = '';
+    if (profile) {
+      const parts = [];
+      if (profile.company_name) parts.push(`Company: ${profile.company_name}`);
+      if (profile.company_description) parts.push(`About: ${profile.company_description}`);
+      if (profile.company_size) parts.push(`Size: ${profile.company_size}`);
+      if (profile.target_market) parts.push(`Target market: ${profile.target_market}`);
+      if (profile.value_proposition) parts.push(`Value proposition: ${profile.value_proposition}`);
+      if (profileProducts.length) parts.push(`Key products/services: ${profileProducts.join(', ')}`);
+      if (profileCompetitors.length) parts.push(`Competitors: ${profileCompetitors.join(', ')}`);
+      if (parts.length) companyContext = `\nCompany context:\n${parts.join('\n')}\n`;
+    }
+
+    // Build knowledge base context
+    let kbContext = '';
+    if (kbDocs.length) {
+      kbContext = `\nKnowledge base documents (reference these when answering questions about the company):\n${kbDocs.map(d => `[${d.filename}]\n${d.content.slice(0, 2000)}`).join('\n---\n')}\n`;
+    }
+
     // Intent detection + response
     const systemPrompt = `You are Homin, a personal intelligence assistant. You help with research, content creation, and task management.
 
@@ -545,7 +615,8 @@ Current user profile: ${profile ? `${profile.name || 'Unknown'}, ${profile.role 
 User's region/country (scope research, news, and recommendations here unless the user asks for elsewhere): ${region || 'unspecified'}
 User's website: ${profile?.website || 'none'}
 Reference links the user trusts (use these as context/sources when relevant):
-${profile?.links?.length ? profile.links.map((l, i) => `- ${i + 1}. ${l}`).join('\n') : 'none'}
+${profileLinks.length ? profileLinks.map((l, i) => `- ${i + 1}. ${l}`).join('\n') : 'none'}
+${companyContext}${kbContext}
 Tracked topics:
 ${topicList || 'No topics tracked yet'}
 Memory:

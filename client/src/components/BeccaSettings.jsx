@@ -1,38 +1,83 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 
-const INDUSTRIES = ['Automotive', 'Technology', 'Finance', 'Healthcare', 'Energy', 'Retail', 'Policy / Gov', 'Media', 'Real Estate', 'Education'];
-const USECASES = ['Business decisions', 'Regulatory compliance', 'Investments', 'Research', 'Staying informed', 'Competitive intel'];
+const INDUSTRIES = ['Automotive', 'Technology', 'Finance', 'Healthcare', 'Energy', 'Retail', 'Policy / Gov', 'Media', 'Real Estate', 'Education', 'Logistics', 'Agriculture', 'Manufacturing', 'Telecoms', 'Consulting'];
+const USECASES = ['Business decisions', 'Regulatory compliance', 'Investments', 'Research', 'Staying informed', 'Competitive intel', 'Market analysis', 'Crisis monitoring', 'Partnership intel'];
+const COMPANY_SIZES = ['Solo founder', '2-10', '11-50', '51-200', '201-1000', '1000+'];
+
+function TagPicker({ options, selected, onToggle }) {
+  return (
+    <div className="profile-tags">
+      {options.map(opt => (
+        <div key={opt} className={`ptag ${selected.includes(opt) ? 'selected' : ''}`} onClick={() => onToggle(opt)}>{opt}</div>
+      ))}
+    </div>
+  );
+}
+
+function EditableList({ items, onChange, placeholder }) {
+  return (
+    <div>
+      {items.map((item, i) => (
+        <div className="pf-link-row" key={i}>
+          <input className="pf-input" value={item} onChange={e => {
+            const next = [...items]; next[i] = e.target.value; onChange(next);
+          }} placeholder={placeholder} />
+          <span className="mp-del" onClick={() => onChange(items.filter((_, j) => j !== i))}>✕</span>
+        </div>
+      ))}
+      <div className="add-row" style={{ marginTop: 6 }}>
+        <button className="btn-add-topic" onClick={() => onChange([...items, ''])}>+ Add</button>
+      </div>
+    </div>
+  );
+}
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMemory, onRemoveMemory, onSaveSettings, settings, onClose }) {
+  const [tab, setTab] = useState('company');
+  const [companyName, setCompanyName] = useState('');
+  const [companyDescription, setCompanyDescription] = useState('');
+  const [website, setWebsite] = useState('');
+  const [companySize, setCompanySize] = useState('');
+  const [keyProducts, setKeyProducts] = useState([]);
+  const [competitors, setCompetitors] = useState([]);
+  const [targetMarket, setTargetMarket] = useState('');
+  const [valueProposition, setValueProposition] = useState('');
+  const [industries, setIndustries] = useState([]);
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [location, setLocation] = useState('');
-  const [website, setWebsite] = useState('');
-  const [links, setLinks] = useState([]);
-  const [bio, setBio] = useState('');
-  const [industries, setIndustries] = useState([]);
   const [usecases, setUsecases] = useState([]);
-  const [memInput, setMemInput] = useState('');
-  const [tab, setTab] = useState('profile');
+  const [links, setLinks] = useState([]);
+  const [country, setCountry] = useState('');
   const [quietFrom, setQuietFrom] = useState('22:00');
   const [quietTo, setQuietTo] = useState('07:00');
-  const [country, setCountry] = useState('');
+  const [knowledge, setKnowledge] = useState([]);
+  const [docFilename, setDocFilename] = useState('');
+  const [docContent, setDocContent] = useState('');
+  const [memInput, setMemInput] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (profile) {
+      setCompanyName(profile.company_name || '');
+      setCompanyDescription(profile.company_description || '');
+      setWebsite(profile.website || '');
+      setCompanySize(profile.company_size || '');
+      setKeyProducts(profile.key_products || []);
+      setCompetitors(profile.competitors || []);
+      setTargetMarket(profile.target_market || '');
+      setValueProposition(profile.value_proposition || '');
+      setIndustries(profile.industries || []);
       setName(profile.name || '');
       setRole(profile.role || '');
       setLocation(profile.location || '');
-      setWebsite(profile.website || '');
-      setLinks(profile.links || []);
-      setBio(profile.bio || '');
-      setIndustries(profile.industries || []);
       setUsecases(profile.usecases || []);
+      setLinks(profile.links || []);
     }
   }, [profile]);
 
@@ -44,18 +89,39 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     }
   }, [settings]);
 
-  function handleSave() {
-    onSaveProfile({ name, role, location, website, links: links.map(l => l.trim()).filter(Boolean), bio, industries, usecases });
-    onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
-    onClose();
+  useEffect(() => {
+    let alive = true;
+    api.becca.listKnowledge()
+      .then(data => { if (alive) setKnowledge(Array.isArray(data) ? data : (data.docs || [])); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  function toggle(list, setList, val) {
+    setList(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
   }
 
-  function toggleIndustry(ind) {
-    setIndustries(prev => prev.includes(ind) ? prev.filter(i => i !== ind) : [...prev, ind]);
+  async function handleAddDoc() {
+    const fname = docFilename.trim();
+    if (!fname || !docContent.trim()) return;
+    try {
+      await api.becca.addKnowledgeDoc({ filename: fname, content: docContent, doc_type: 'text' });
+      setDocFilename('');
+      setDocContent('');
+      const data = await api.becca.listKnowledge();
+      setKnowledge(Array.isArray(data) ? data : (data.docs || []));
+    } catch {
+      alert('Could not add document — try again.');
+    }
   }
 
-  function toggleUsecase(uc) {
-    setUsecases(prev => prev.includes(uc) ? prev.filter(u => u !== uc) : [...prev, uc]);
+  async function handleDeleteDoc(id) {
+    try {
+      await api.becca.deleteKnowledgeDoc(id);
+      setKnowledge(knowledge.filter(d => d.id !== id));
+    } catch {
+      alert('Could not delete document — try again.');
+    }
   }
 
   function handleAddMemory() {
@@ -65,7 +131,6 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     setMemInput('');
   }
 
-  const [exporting, setExporting] = useState(false);
   async function handleExport() {
     try {
       setExporting(true);
@@ -86,6 +151,27 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     }
   }
 
+  function handleSave() {
+    onSaveProfile({
+      company_name: companyName,
+      company_description: companyDescription,
+      website,
+      company_size: companySize,
+      key_products: keyProducts.map(p => p.trim()).filter(Boolean),
+      competitors: competitors.map(c => c.trim()).filter(Boolean),
+      target_market: targetMarket,
+      value_proposition: valueProposition,
+      industries,
+      name,
+      role,
+      location,
+      usecases,
+      links: links.map(l => l.trim()).filter(Boolean)
+    });
+    onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
+    onClose();
+  }
+
   const initials = name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?';
 
   return (
@@ -95,7 +181,7 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
           <div className="modal-head-l">
             <div className="modal-avatar-lg">{initials}</div>
             <div>
-              <div className="modal-head-title">{name || 'Profile'}</div>
+              <div className="modal-head-title">{companyName || name || 'Profile'}</div>
               <div className="modal-head-sub">Personal Intelligence Assistant</div>
             </div>
           </div>
@@ -103,72 +189,121 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
         </div>
 
         <div className="modal-tabs">
-          <div className={`modal-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => setTab('profile')}>Profile</div>
-          <div className={`modal-tab ${tab === 'context' ? 'active' : ''}`} onClick={() => setTab('context')}>Context & Sources</div>
+          <div className={`modal-tab ${tab === 'company' ? 'active' : ''}`} onClick={() => setTab('company')}>Company</div>
+          <div className={`modal-tab ${tab === 'you' ? 'active' : ''}`} onClick={() => setTab('you')}>You</div>
+          <div className={`modal-tab ${tab === 'knowledge' ? 'active' : ''}`} onClick={() => setTab('knowledge')}>Knowledge Base</div>
           <div className={`modal-tab ${tab === 'preferences' ? 'active' : ''}`} onClick={() => setTab('preferences')}>Preferences</div>
           <div className={`modal-tab ${tab === 'memory' ? 'active' : ''}`} onClick={() => setTab('memory')}>Memory</div>
         </div>
 
         <div className="modal-body">
-          {tab === 'profile' && (
-            <div className={`modal-tab-panel${tab === 'profile' ? ' active' : ''}`}>
+          {tab === 'company' && (
+            <div className={`modal-tab-panel${tab === 'company' ? ' active' : ''}`}>
+              <div className="pf-group">
+                <div className="pf-label">Company Name</div>
+                <input className="pf-input" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="e.g. Acme Ltd" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">About the Company</div>
+                <textarea className="pf-textarea" rows={3} value={companyDescription} onChange={e => setCompanyDescription(e.target.value)}
+                  placeholder="What your company does, who it serves, and what makes it different…" />
+              </div>
+              <div className="pf-row">
+                <div className="pf-group">
+                  <div className="pf-label">Website</div>
+                  <input className="pf-input" value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://…" />
+                </div>
+                <div className="pf-group">
+                  <div className="pf-label">Company Size</div>
+                  <select className="pf-input" value={companySize} onChange={e => setCompanySize(e.target.value)}>
+                    <option value="">Select…</option>
+                    {COMPANY_SIZES.map(size => <option key={size} value={size}>{size}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Key Products / Services</div>
+                <EditableList items={keyProducts} onChange={setKeyProducts} placeholder="e.g. Mobile app for logistics tracking" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Competitors</div>
+                <EditableList items={competitors} onChange={setCompetitors} placeholder="e.g. Competitor Inc" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Target Market</div>
+                <input className="pf-input" value={targetMarket} onChange={e => setTargetMarket(e.target.value)}
+                  placeholder="e.g. SMB retailers in West Africa" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Value Proposition</div>
+                <textarea className="pf-textarea" rows={2} value={valueProposition} onChange={e => setValueProposition(e.target.value)}
+                  placeholder="Why customers choose you over alternatives…" />
+              </div>
+              <div className="pf-group">
+                <div className="pf-label">Industry</div>
+                <TagPicker options={INDUSTRIES} selected={industries} onToggle={val => toggle(industries, setIndustries, val)} />
+              </div>
+            </div>
+          )}
+
+          {tab === 'you' && (
+            <div className={`modal-tab-panel${tab === 'you' ? ' active' : ''}`}>
               <div className="pf-row">
                 <div className="pf-group">
                   <div className="pf-label">Name</div>
                   <input className="pf-input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Alex" />
                 </div>
                 <div className="pf-group">
-                  <div className="pf-label">Country / Region</div>
-                  <input className="pf-input" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Lagos, Nigeria" />
+                  <div className="pf-label">Role</div>
+                  <input className="pf-input" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Startup Founder, Investment Analyst…" />
                 </div>
               </div>
               <div className="pf-group">
-                <div className="pf-label">Role</div>
-                <input className="pf-input" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Startup Founder, Investment Analyst…" />
-              </div>
-            </div>
-          )}
-
-          {tab === 'context' && (
-            <div className={`modal-tab-panel${tab === 'context' ? ' active' : ''}`}>
-              <div className="pf-group">
-                <div className="pf-label">Context</div>
-                <textarea className="pf-textarea" value={bio} onChange={e => setBio(e.target.value)}
-                  placeholder="Tell Homin about your work, what you track, and why it matters to you…" rows={3} />
+                <div className="pf-label">Country / Region</div>
+                <input className="pf-input" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Lagos, Nigeria" />
               </div>
               <div className="pf-group">
-                <div className="pf-label">Website</div>
-                <input className="pf-input" value={website} onChange={e => setWebsite(e.target.value)} placeholder="e.g. https://yourcompany.com" />
+                <div className="pf-label">I use Homin for</div>
+                <TagPicker options={USECASES} selected={usecases} onToggle={val => toggle(usecases, setUsecases, val)} />
               </div>
               <div className="pf-group">
                 <div className="pf-label">Reference Links</div>
                 <div className="modal-desc" style={{ marginBottom: 10 }}>Links you trust — Homin uses these as context and sources when relevant.</div>
-                {links.map((l, i) => (
-                  <div className="pf-link-row" key={i}>
-                    <input className="pf-input" value={l} onChange={e => {
-                      const next = [...links]; next[i] = e.target.value; setLinks(next);
-                    }} placeholder="https://…" />
-                    <span className="mp-del" onClick={() => setLinks(links.filter((_, j) => j !== i))}>✕</span>
-                  </div>
-                ))}
-                <div className="add-row" style={{ marginTop: 6 }}>
-                  <button className="btn-add-topic" onClick={() => setLinks([...links, ''])}>+ Add link</button>
+                <EditableList items={links} onChange={setLinks} placeholder="https://…" />
+              </div>
+            </div>
+          )}
+
+          {tab === 'knowledge' && (
+            <div className={`modal-tab-panel${tab === 'knowledge' ? ' active' : ''}`}>
+              <div className="settings-section">
+                <div className="settings-section-title">Uploaded Documents</div>
+                <div className="modal-desc" style={{ marginBottom: 10 }}>Documents Homin references when answering questions about your business.</div>
+                <div className="memory-pills-wrap">
+                  {knowledge.map(doc => (
+                    <div key={doc.id} className="memory-pill">
+                      {esc(doc.filename)}
+                      {doc.created_at && <span style={{ opacity: 0.6, marginLeft: 8 }}>{new Date(doc.created_at).toLocaleDateString()}</span>}
+                      <span className="mp-del" onClick={() => handleDeleteDoc(doc.id)}>✕</span>
+                    </div>
+                  ))}
+                  {knowledge.length === 0 && <div className="empty-note">No documents uploaded yet.</div>}
                 </div>
               </div>
-              <div className="pf-group">
-                <div className="pf-label">Industry</div>
-                <div className="profile-tags">
-                  {INDUSTRIES.map(ind => (
-                    <div key={ind} className={`ptag ${industries.includes(ind) ? 'selected' : ''}`} onClick={() => toggleIndustry(ind)}>{ind}</div>
-                  ))}
+              <div className="settings-section" style={{ marginTop: 16 }}>
+                <div className="settings-section-title">Add New Document</div>
+                <div className="pf-group">
+                  <div className="pf-label">Filename</div>
+                  <input className="pf-input" value={docFilename} onChange={e => setDocFilename(e.target.value)}
+                    placeholder="e.g. product-spec.md" />
                 </div>
-              </div>
-              <div className="pf-group">
-                <div className="pf-label">I use Homin for</div>
-                <div className="profile-tags">
-                  {USECASES.map(uc => (
-                    <div key={uc} className={`ptag ${usecases.includes(uc) ? 'selected' : ''}`} onClick={() => toggleUsecase(uc)}>{uc}</div>
-                  ))}
+                <div className="pf-group">
+                  <div className="pf-label">Content</div>
+                  <textarea className="pf-textarea" rows={6} value={docContent} onChange={e => setDocContent(e.target.value)}
+                    placeholder="Paste the document contents here…" />
+                </div>
+                <div className="add-row">
+                  <button className="btn-add-topic" onClick={handleAddDoc}>Add Document</button>
                 </div>
               </div>
             </div>

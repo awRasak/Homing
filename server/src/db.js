@@ -234,6 +234,36 @@ if (!profileColumns.has('links')) {
   db.exec(`ALTER TABLE becca_profile ADD COLUMN links TEXT NOT NULL DEFAULT '[]'`);
 }
 
+// Migration: add business profile fields
+const bizFields = [
+  ['company_name', "TEXT NOT NULL DEFAULT ''"],
+  ['company_description', "TEXT NOT NULL DEFAULT ''"],
+  ['company_size', "TEXT NOT NULL DEFAULT ''"],
+  ['key_products', "TEXT NOT NULL DEFAULT '[]'"],
+  ['competitors', "TEXT NOT NULL DEFAULT '[]'"],
+  ['target_market', "TEXT NOT NULL DEFAULT ''"],
+  ['value_proposition', "TEXT NOT NULL DEFAULT ''"],
+  ['knowledge_base', "TEXT NOT NULL DEFAULT '[]'"],
+];
+for (const [name, def] of bizFields) {
+  if (!profileColumns.has(name)) {
+    db.exec(`ALTER TABLE becca_profile ADD COLUMN ${name} ${def}`);
+  }
+}
+
+// Knowledge base documents table
+db.exec(`
+CREATE TABLE IF NOT EXISTS becca_knowledge_docs (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL DEFAULT 'default',
+  filename TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  doc_type TEXT NOT NULL DEFAULT 'text',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_becca_knowledge_workspace ON becca_knowledge_docs(workspace);
+`);
+
 db.exec(`CREATE INDEX IF NOT EXISTS idx_becca_chat_session ON becca_chat_history(session_id)`);
 
 // ═══════════════════════════════════════════

@@ -174,6 +174,17 @@ export const api = {
       return await res.text();
     },
 
+    listKnowledge: (workspace = 'default') =>
+      fetch(`${BASE}/becca/knowledge?workspace=${workspace}`).then(handle),
+    getKnowledgeDoc: (id) =>
+      fetch(`${BASE}/becca/knowledge/${id}`).then(handle),
+    addKnowledgeDoc: (data) =>
+      fetch(`${BASE}/becca/knowledge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+      }).then(handle),
+    deleteKnowledgeDoc: (id) =>
+      fetch(`${BASE}/becca/knowledge/${id}`, { method: 'DELETE' }).then(handle),
+
     listTopics: (workspace = 'default') =>
       fetch(`${BASE}/becca/topics?workspace=${workspace}`).then(handle),
     addTopic: (data) =>
