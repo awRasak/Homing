@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api } from './api';
+import { api, auth, setAuthToken, getAuthToken } from './api';
 import OnboardingModal from './components/OnboardingModal';
 import DesignStrip from './components/DesignStrip';
 import ChatBar from './components/ChatBar';
@@ -37,8 +37,6 @@ const COMING_SOON_COPY = {
   settings: { icon: '⚙️', title: 'Settings', description: 'Account and profile settings are coming soon.' },
 };
 
-const BECCA_WORKSPACE = 'default';
-
 export default function App() {
   const [section, setSection] = useState('becca');
   const [theme, setTheme] = useState(() => (localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'));
@@ -69,6 +67,13 @@ export default function App() {
   const [beccaSettings, setBeccaSettings] = useState({ dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00' });
   const [beccaSettingsOpen, setBeccaSettingsOpen] = useState(false);
   const [beccaModel, setBeccaModel] = useState(() => localStorage.getItem('homin:model') || 'gpt-oss-20b');
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
 
   const bootstrapped = useRef(false);
   const saveTimers = useRef({});
@@ -103,6 +108,18 @@ export default function App() {
 
     (async () => {
       try {
+        // Check auth
+        const token = getAuthToken();
+        if (token) {
+          try {
+            const me = await auth.me();
+            setAuthUser(me.user);
+          } catch {
+            setAuthToken(null);
+          }
+        }
+        setAuthLoading(false);
+
         const status = await api.status();
         setProviders(status.providers || {});
         setActiveProvider(status.activeProvider || 'anthropic');
@@ -129,12 +146,12 @@ export default function App() {
       // Load Becca data
       try {
         const [topics, profile, memory, reminders, briefings, settings] = await Promise.all([
-          api.becca.listTopics(BECCA_WORKSPACE),
-          api.becca.getProfile(BECCA_WORKSPACE),
-          api.becca.listMemory(BECCA_WORKSPACE),
-          api.becca.listReminders(BECCA_WORKSPACE),
-          api.becca.listBriefings(BECCA_WORKSPACE, 100),
-          api.becca.getSettings(BECCA_WORKSPACE),
+          api.becca.listTopics(),
+          api.becca.getProfile(),
+          api.becca.listMemory(),
+          api.becca.listReminders(),
+          api.becca.listBriefings(100),
+          api.becca.getSettings(),
         ]);
         setBeccaTopics(topics || []);
         setBeccaProfile(profile);
@@ -351,15 +368,90 @@ export default function App() {
         const withoutDup = prev.filter((p) => p.id !== proposal.id);
         return [proposal, ...withoutDup];
       });
-      const titleBlock = (activeDesign.sourceTextBlocks || []).find((b) => b.tier === 'title');
-      if (titleBlock && proposal.headline) {
-        const pages = activeDesign.pages || [];
-        if (pages.length > 1) {
-          const currentOverrides = activeDesign.pageOverrides || {};
-          const page1Overrides = { ...(currentOverrides['1'] || {}), [titleBlock.id]: proposal.headline };
-          patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
-        } else {
-          handleTextOverride(titleBlock.id, proposal.headline);
+
+      // Map AI-generated content onto text blocks in live-PDF mode
+      const allBlocks = activeDesign.pages?.length
+        ? (activeDesign.pages[0]?.blocks || [])
+        : (activeDesign.sourceTextBlocks || []);
+      if (allBlocks.length && (proposal.opening || proposal.bodyParagraphs?.length || proposal.closing)) {
+        const titleBlock = allBlocks.find((b) => b.tier === 'title');
+        const bodyBlocks = allBlocks
+          .filter((b) => b.tier === 'body' && (!titleBlock || b.id !== titleBlock.id))
+          .sort((a, b) => a.y - b.y);
+
+        // Group body blocks into paragraph zones by vertical proximity
+        const avgHeight = bodyBlocks.length ? bodyBlocks.reduce((s, b) => s + b.height, 0) / bodyBlocks.length : 0;
+        const gapThreshold = avgHeight * 2.5 || 30;
+        const zones = [];
+        for (const b of bodyBlocks) {
+          const lastZone = zones[zones.length - 1];
+          if (lastZone && (b.y - lastZone[lastZone.length - 1].y - lastZone[lastZone.length - 1].height) <= gapThreshold) {
+            lastZone.push(b);
+          } else {
+            zones.push([b]);
+          }
+        }
+
+        // Build content list: opening + bodyParagraphs + closing
+        const contentPieces = [];
+        if (proposal.opening) contentPieces.push(proposal.opening);
+        if (proposal.bodyParagraphs?.length) contentPieces.push(...proposal.bodyParagraphs);
+        if (proposal.closing) contentPieces.push(proposal.closing);
+
+        if (zones.length > 0 && contentPieces.length > 0) {
+          const newOverrides = {};
+          // Distribute content across zones
+          for (let i = 0; i < zones.length; i++) {
+            const text = i < contentPieces.length ? contentPieces[i] : '';
+            // Apply text to the first block in each zone, clear the rest
+            zones[i].forEach((block, j) => {
+              newOverrides[block.id] = j === 0 ? text : '';
+            });
+          }
+          // If more content pieces than zones, merge extras into the last zone
+          if (contentPieces.length > zones.length) {
+            const lastZoneBlocks = zones[zones.length - 1];
+            const extras = contentPieces.slice(zones.length).join('\n\n');
+            lastZoneBlocks.forEach((block, j) => {
+              if (j === 0) newOverrides[block.id] = (newOverrides[block.id] || '') + '\n\n' + extras;
+            });
+          }
+
+          const pages = activeDesign.pages || [];
+          if (pages.length > 1) {
+            const currentOverrides = activeDesign.pageOverrides || {};
+            const page1Overrides = { ...(currentOverrides['1'] || {}), ...newOverrides };
+            if (titleBlock && proposal.headline) page1Overrides[titleBlock.id] = proposal.headline;
+            patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
+          } else {
+            const currentOverrides = activeDesign.textOverrides || {};
+            const next = { ...currentOverrides, ...newOverrides };
+            if (titleBlock && proposal.headline) next[titleBlock.id] = proposal.headline;
+            patchDesign(activeDesign.id, { textOverrides: next });
+          }
+        } else if (titleBlock && proposal.headline) {
+          // Fallback: only map headline if no body blocks
+          const pages = activeDesign.pages || [];
+          if (pages.length > 1) {
+            const currentOverrides = activeDesign.pageOverrides || {};
+            const page1Overrides = { ...(currentOverrides['1'] || {}), [titleBlock.id]: proposal.headline };
+            patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
+          } else {
+            handleTextOverride(titleBlock.id, proposal.headline);
+          }
+        }
+      } else {
+        // Templated mode or no content: only map headline
+        const titleBlock = (activeDesign.sourceTextBlocks || []).find((b) => b.tier === 'title');
+        if (titleBlock && proposal.headline) {
+          const pages = activeDesign.pages || [];
+          if (pages.length > 1) {
+            const currentOverrides = activeDesign.pageOverrides || {};
+            const page1Overrides = { ...(currentOverrides['1'] || {}), [titleBlock.id]: proposal.headline };
+            patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
+          } else {
+            handleTextOverride(titleBlock.id, proposal.headline);
+          }
         }
       }
     } catch (err) {
@@ -409,8 +501,8 @@ export default function App() {
     const existing = beccaTopics.find(t => t.name.toLowerCase() === name.toLowerCase());
     if (existing) return false;
     try {
-      const result = await api.becca.addTopic({ name, context, workspace: BECCA_WORKSPACE });
-      const newTopic = { id: result.id, name, context, priority: 'medium', workspace: BECCA_WORKSPACE };
+      const result = await api.becca.addTopic({ name, context });
+      const newTopic = { id: result.id, name, context, priority: 'medium' };
       setBeccaTopics(prev => [...prev, newTopic]);
       return true;
     } catch { return false; }
@@ -427,13 +519,13 @@ export default function App() {
   }
 
   async function handleBeccaSaveProfile(data) {
-    await api.becca.saveProfile({ ...data, workspace: BECCA_WORKSPACE });
-    setBeccaProfile({ ...data, workspace: BECCA_WORKSPACE });
+    await api.becca.saveProfile({ ...data });
+    setBeccaProfile({ ...data });
   }
 
   async function handleBeccaAddMemory(content) {
-    const result = await api.becca.addMemory({ content, workspace: BECCA_WORKSPACE });
-    setBeccaMemory(prev => [...prev, { id: result.id, content, workspace: BECCA_WORKSPACE }]);
+    const result = await api.becca.addMemory({ content });
+    setBeccaMemory(prev => [...prev, { id: result.id, content }]);
   }
 
   async function handleBeccaRemoveMemory(id) {
@@ -442,7 +534,7 @@ export default function App() {
   }
 
   async function handleBeccaSaveSettings(key, value) {
-    await api.becca.saveSettings(key, value, BECCA_WORKSPACE);
+    await api.becca.saveSettings(key, value);
     setBeccaSettings(prev => ({ ...prev, ...value }));
   }
 
@@ -457,9 +549,33 @@ export default function App() {
   }
 
   async function handleBeccaAddReminder(data) {
-    const result = await api.becca.addReminder({ ...data, workspace: BECCA_WORKSPACE });
+    const result = await api.becca.addReminder({ ...data });
     const now = new Date().toISOString();
     setBeccaReminders(prev => [{ id: result.id, text: data.text, due: data.due || null, when_raw: data.when_raw || '', fired: 0, dismissed: 0, created_at: now }, ...prev]);
+  }
+
+  async function handleAuthSubmit(e) {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      const result = authMode === 'login'
+        ? await auth.login(authEmail, authPassword)
+        : await auth.signup(authEmail, authPassword, authName);
+      setAuthToken(result.token);
+      setAuthUser(result.user);
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  }
+
+  function handleLogout() {
+    setAuthToken(null);
+    setAuthUser(null);
+  }
+
+  function handleAuthSwitch() {
+    setAuthMode(prev => prev === 'login' ? 'signup' : 'login');
+    setAuthError('');
   }
 
   useEffect(() => {
@@ -501,6 +617,39 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleResizeMouseDown);
   }, []);
 
+  if (authLoading) {
+    return <div className="app-loading">Loading…</div>;
+  }
+
+  if (!authUser) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <img src="/icons/logomark.png" alt="Homin" className="auth-logo" />
+          <h1 className="auth-title">{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+          <p className="auth-sub">{authMode === 'login' ? 'Sign in to continue' : 'Get started with Homin'}</p>
+          <form className="auth-form" onSubmit={handleAuthSubmit}>
+            {authMode === 'signup' && (
+              <input type="text" placeholder="Your name" className="auth-input"
+                value={authName} onChange={e => setAuthName(e.target.value)} />
+            )}
+            <input type="email" placeholder="Email" className="auth-input" required
+              value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+            <input type="password" placeholder="Password (min 6 characters)" className="auth-input" required minLength={6}
+              value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
+            {authError && <div className="auth-error">{authError}</div>}
+            <button type="submit" className="auth-submit">
+              {authMode === 'login' ? 'Sign in' : 'Create account'}
+            </button>
+          </form>
+          <button className="auth-switch" onClick={handleAuthSwitch}>
+            {authMode === 'login' ? 'Don\'t have an account? Sign up' : 'Already have an account? Sign in'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return <div className="app-loading">Loading…</div>;
   }
@@ -530,6 +679,9 @@ export default function App() {
               onClick={toggleTheme}
             >
               <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="theme-toggle-img" />
+            </button>
+            <button type="button" className="btn-secondary" onClick={handleLogout} title="Sign out">
+              Sign out
             </button>
             {section === 'proposals' && (
               <>
@@ -561,12 +713,12 @@ export default function App() {
               onAddTopic={handleBeccaAddTopic} onRemoveTopic={handleBeccaRemoveTopic}
               onUpdateTopic={handleBeccaUpdateTopic} onSaveSettings={handleBeccaSaveSettings}
               onAddReminder={handleBeccaAddReminder} onDismissReminder={handleBeccaDismissReminder}
-              workspace={BECCA_WORKSPACE} beccaSection={beccaSection} onSectionChange={setBeccaSection}
+              beccaSection={beccaSection} onSectionChange={setBeccaSection}
               beccaModel={beccaModel} onModelChange={(m) => { setBeccaModel(m); localStorage.setItem('homin:model', m); }}
               onActionExecuted={() => {
-                api.becca.listTopics(BECCA_WORKSPACE).then(setBeccaTopics).catch(() => {});
-                api.becca.listReminders(BECCA_WORKSPACE).then(setBeccaReminders).catch(() => {});
-                api.becca.listBriefings(BECCA_WORKSPACE).then(setBeccaBriefings).catch(() => {});
+                api.becca.listTopics().then(setBeccaTopics).catch(() => {});
+                api.becca.listReminders().then(setBeccaReminders).catch(() => {});
+                api.becca.listBriefings().then(setBeccaBriefings).catch(() => {});
               }} />
             {beccaSettingsOpen && (
               <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
@@ -676,7 +828,18 @@ export default function App() {
                             <button type="button" className="btn-secondary" onClick={() => setEditOpen(true)}>Edit proposal</button>
                           </div>
                         )}
-                        {!currentProposal && activeDesign && (
+                        {generating && (
+                          <div className="generate-progress no-print" role="status" aria-live="polite">
+                            <div className="generate-progress-info">
+                              <span className="generate-progress-spinner" />
+                              <span className="generate-progress-label">Generating your proposal…</span>
+                            </div>
+                            <div className="generate-progress-track">
+                              <div className="generate-progress-fill" />
+                            </div>
+                          </div>
+                        )}
+                        {!currentProposal && activeDesign && !generating && (
                           <div className="empty-state no-print">
                             <div className="empty-state-steps">
                               <div className="empty-step">

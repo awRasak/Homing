@@ -10,8 +10,10 @@ import pdfRouter from './routes/pdf.js';
 import campaignsRouter from './routes/campaigns.js';
 import trackingRouter from './routes/tracking.js';
 import beccaRouter from './routes/becca.js';
+import authRouter from './routes/auth.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
 import { startScheduler } from './scheduler.js';
+import { requireAuth } from './auth.js';
 import './db.js';
 
 const app = express();
@@ -26,15 +28,19 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-app.use('/api/designs', designsRouter);
-app.use('/api/designs', generateRouter);
-app.use('/api/designs', batchRouter);
-app.use('/api/proposals', proposalsRouter);
-app.use('/api/proposals', pdfRouter);
-app.use('/api/recipients', recipientsRouter);
-app.use('/api/campaigns', campaignsRouter);
-app.use('/api/track', trackingRouter);
-app.use('/api/becca', beccaRouter);
+// Auth routes — public
+app.use('/api/auth', authRouter);
+
+// Protected routes
+app.use('/api/designs', requireAuth, designsRouter);
+app.use('/api/designs', requireAuth, generateRouter);
+app.use('/api/designs', requireAuth, batchRouter);
+app.use('/api/proposals', requireAuth, proposalsRouter);
+app.use('/api/proposals', requireAuth, pdfRouter);
+app.use('/api/recipients', requireAuth, recipientsRouter);
+app.use('/api/campaigns', requireAuth, campaignsRouter);
+app.use('/api/track', requireAuth, trackingRouter);
+app.use('/api/becca', requireAuth, beccaRouter);
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {

@@ -138,7 +138,7 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
 // PROFILE
 // ═══════════════════════════════════════════
 router.get('/profile', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const row = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
   if (!row) return res.json(null);
   res.json({
@@ -152,7 +152,7 @@ router.get('/profile', (req, res) => {
 });
 
 router.put('/profile', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const existing = db.prepare('SELECT id FROM becca_profile WHERE workspace = ?').get(ws);
   const now = nowIso();
   const website = (req.body.website || '').trim();
@@ -188,7 +188,7 @@ router.put('/profile', (req, res) => {
 // KNOWLEDGE BASE DOCUMENTS
 // ═══════════════════════════════════════════
 router.get('/knowledge', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const rows = db.prepare('SELECT id, workspace, filename, doc_type, created_at FROM becca_knowledge_docs WHERE workspace = ? ORDER BY created_at DESC').all(ws);
   res.json(rows);
 });
@@ -200,7 +200,7 @@ router.get('/knowledge/:id', (req, res) => {
 });
 
 router.post('/knowledge', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const filename = (req.body.filename || '').trim();
   const content = (req.body.content || '').trim();
   const docType = req.body.doc_type || 'text';
@@ -221,7 +221,7 @@ router.delete('/knowledge/:id', (req, res) => {
 // TOPICS
 // ═══════════════════════════════════════════
 router.get('/topics', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const status = req.query.status; // optional: 'active', 'paused', or undefined for all
   let rows;
   if (status) {
@@ -233,7 +233,7 @@ router.get('/topics', (req, res) => {
 });
 
 router.post('/topics', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Topic name required' });
 
@@ -290,7 +290,7 @@ router.put('/topics/:id/toggle-status', (req, res) => {
 
 // Manual brief trigger for a single topic
 router.post('/topics/:id/trigger-brief', async (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const model = req.body.model || 'gpt-oss-20b';
   const region = req.body.region || '';
   const topic = db.prepare('SELECT * FROM becca_topics WHERE id = ? AND workspace = ?').get(req.params.id, ws);
@@ -328,7 +328,7 @@ router.post('/topics/:id/trigger-brief', async (req, res) => {
 // BRIEFINGS
 // ═══════════════════════════════════════════
 router.get('/briefings', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
   const rows = db.prepare('SELECT * FROM becca_briefings WHERE workspace = ? ORDER BY created_at DESC LIMIT ?').all(ws, limit);
   res.json(rows.map(r => ({
@@ -342,7 +342,7 @@ router.get('/briefings', (req, res) => {
 // BLOG DRAFTS
 // ═══════════════════════════════════════════
 router.get('/blog-drafts', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const status = req.query.status;
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
   let rows;
@@ -373,13 +373,13 @@ router.delete('/blog-drafts/:id', (req, res) => {
 // REMINDERS
 // ═══════════════════════════════════════════
 router.get('/reminders', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const rows = db.prepare('SELECT * FROM becca_reminders WHERE workspace = ? ORDER BY created_at DESC').all(ws);
   res.json(rows);
 });
 
 router.post('/reminders', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const id = newId();
   const now = nowIso();
   db.prepare('INSERT INTO becca_reminders (id, workspace, text, due, when_raw, fired, dismissed, created_at) VALUES (?,?,?,?,?,?,?,?)').run(
@@ -408,13 +408,13 @@ router.delete('/reminders/:id', (req, res) => {
 // MEMORY
 // ═══════════════════════════════════════════
 router.get('/memory', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const rows = db.prepare('SELECT * FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC').all(ws);
   res.json(rows);
 });
 
 router.post('/memory', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const content = (req.body.content || '').trim();
   if (!content) return res.status(400).json({ error: 'Content required' });
   const id = newId();
@@ -439,7 +439,7 @@ function todaySessionId(ws) {
 }
 
 router.get('/chat', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const session = req.query.session;
   if (session) {
     const rows = db.prepare('SELECT * FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at ASC').all(ws, session);
@@ -451,7 +451,7 @@ router.get('/chat', (req, res) => {
 });
 
 router.get('/chat/:sessionId', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const rows = db.prepare('SELECT * FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at ASC').all(ws, req.params.sessionId);
   res.json(rows);
 });
@@ -460,7 +460,7 @@ router.get('/chat/:sessionId', (req, res) => {
 // EXPORT — full knowledge base (markdown)
 // ═══════════════════════════════════════════
 router.get('/export', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
 
   const profile = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
   const memory = db.prepare('SELECT * FROM becca_memory WHERE workspace = ? ORDER BY created_at ASC').all(ws);
@@ -531,7 +531,7 @@ router.get('/export', (req, res) => {
 });
 
 router.post('/chat', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const id = newId();
   const sessionId = req.body.session_id || todaySessionId(ws);
   db.prepare('INSERT INTO becca_chat_history (id, workspace, session_id, role, content, created_at) VALUES (?,?,?,?,?,?)').run(
@@ -541,7 +541,7 @@ router.post('/chat', (req, res) => {
 });
 
 router.delete('/chat', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const session = req.query.session;
   if (session) {
     db.prepare('DELETE FROM becca_chat_history WHERE workspace = ? AND session_id = ?').run(ws, session);
@@ -556,8 +556,8 @@ router.delete('/chat', (req, res) => {
 // ═══════════════════════════════════════════
 router.post('/chat/message', async (req, res) => {
   try {
-    const { message, workspace, model } = req.body;
-    const ws = workspace || 'default';
+    const { message, model } = req.body;
+    const ws = req.workspace;
     const sessionId = todaySessionId(ws);
 
     // Save user message
@@ -1025,13 +1025,13 @@ async function executeAction(action, params, ws, model, region = '') {
 // SETTINGS
 // ═══════════════════════════════════════════
 router.get('/settings', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const row = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
   res.json(row ? JSON.parse(row.value) : { dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00', country: 'Nigeria' });
 });
 
 router.put('/settings', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const key = req.body.key || 'daily';
   const val = JSON.stringify(req.body.value || {});
   const existing = db.prepare('SELECT workspace FROM becca_settings WHERE workspace = ? AND key = ?').get(ws, key);
@@ -1055,7 +1055,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS becca_settings (
 // CONTENT PIPELINE — Posts CRUD
 // ═══════════════════════════════════════════
 router.get('/posts', (req, res) => {
-  const ws = req.query.workspace || 'default';
+  const ws = req.workspace;
   const status = req.query.status;
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
   let sql = 'SELECT * FROM becca_posts WHERE workspace = ?';
@@ -1074,7 +1074,7 @@ router.get('/posts/:id', (req, res) => {
 });
 
 router.post('/posts', (req, res) => {
-  const ws = req.body.workspace || 'default';
+  const ws = req.workspace;
   const id = newId();
   const now = nowIso();
   db.prepare(`INSERT INTO becca_posts (id, workspace, topic_name, title, slug, body, excerpt, tags, cover_url, status, published_url, seo_score, seo_data, news_sources, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
@@ -1318,8 +1318,8 @@ router.post('/pipeline/seo/check', async (req, res) => {
 // ═══════════════════════════════════════════
 router.post('/pipeline/run', async (req, res) => {
   try {
-    const { workspace, topicName, topicContext, tone, wordCount, model } = req.body;
-    const ws = workspace || 'default';
+    const { topicName, topicContext, tone, wordCount, model } = req.body;
+    const ws = req.workspace;
 
     // Step 1: Scout news
     const scoutRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/scout`, {
