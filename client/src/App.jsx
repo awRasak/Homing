@@ -16,6 +16,7 @@ import SetupForm from './components/SetupForm';
 import RecipientForm from './components/RecipientForm';
 import BatchGeneratePanel from './components/BatchGeneratePanel';
 import HistoryList from './components/HistoryList';
+import { buildProposalPdf, downloadPdfBytes } from './lib/buildEditedPdf';
 import BeccaLayout from './components/BeccaLayout';
 import BeccaSettings from './components/BeccaSettings';
 import './App.css';
@@ -477,15 +478,14 @@ export default function App() {
   }
 
   async function handleExport() {
-    if (currentProposal?.id) {
-      try {
-        await api.downloadPDF(currentProposal.id);
-      } catch (err) {
-        console.error('PDF download failed', err);
-        window.print();
-      }
-    } else {
-      window.print();
+    if (!activeDesign || !currentProposal) return;
+    try {
+      const bytes = await buildProposalPdf(activeDesign, currentProposal);
+      const slug = (currentProposal.companyName || 'proposal').replace(/[^a-zA-Z0-9]+/g, '_');
+      downloadPdfBytes(bytes, `${slug}.pdf`);
+    } catch (err) {
+      console.error('PDF export failed', err);
+      setGenError(err.message || 'PDF export failed.');
     }
   }
 
@@ -630,12 +630,12 @@ export default function App() {
           <p className="auth-sub">{authMode === 'login' ? 'Sign in to continue' : 'Get started with Homin'}</p>
           <form className="auth-form" onSubmit={handleAuthSubmit}>
             {authMode === 'signup' && (
-              <input type="text" placeholder="Your name" className="auth-input"
+              <input placeholder="Your name" className="auth-input" type="text"
                 value={authName} onChange={e => setAuthName(e.target.value)} />
             )}
-            <input type="email" placeholder="Email" className="auth-input" required
+            <input placeholder="Email" className="auth-input" type="text"
               value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
-            <input type="password" placeholder="Password (min 6 characters)" className="auth-input" required minLength={6}
+            <input placeholder="Password" className="auth-input" type="text"
               value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
             {authError && <div className="auth-error">{authError}</div>}
             <button type="submit" className="auth-submit">
@@ -765,7 +765,8 @@ export default function App() {
                           <button type="button" className="btn-primary" onClick={handleImportDone}>Done</button>
                         </div>
                         <ImportPanel file={importFile} onExtracted={handleExtracted}
-                          onLogoExtracted={handleLogoExtracted} onAccentPicked={handleAccentPicked} />
+                          onLogoExtracted={handleLogoExtracted} onAccentPicked={handleAccentPicked}
+                          designId={activeDesignId} />
                       </div>
                     )}
                     {activeDesign && !importFile && (
