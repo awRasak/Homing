@@ -54,38 +54,50 @@ export default function DesignStrip({ designs, activeDesignId, onSelect, onCreat
             )}
           </button>
           {d.id === activeDesignId && (
-            confirmDeleteId === d.id ? (
-              <span className="design-chip-confirm">
-                <button
-                  type="button"
-                  className="btn-text btn-danger"
-                  onClick={() => {
-                    onDelete(d.id);
-                    setConfirmDeleteId(null);
-                  }}
-                >
-                  Confirm clear?
-                </button>
-                <button type="button" className="btn-text" onClick={() => setConfirmDeleteId(null)}>
-                  Cancel
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="design-chip-clear"
-                title="Clear this design"
-                onClick={() => setConfirmDeleteId(d.id)}
-              >
-                ×
-              </button>
-            )
+            <button
+              type="button"
+              className="design-chip-clear"
+              title="Clear this design"
+              onClick={() => setConfirmDeleteId(d.id)}
+            >
+              ×
+            </button>
           )}
         </div>
       ))}
       <button type="button" className="design-chip design-chip-new" onClick={onCreate}>
         + New design
       </button>
+
+      {confirmDeleteId && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteId(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '320px', padding: '1.5rem' }}>
+            <div className="modal-head-title" style={{ marginBottom: '0.35rem' }}>Delete design?</div>
+            <div className="modal-head-sub" style={{ marginTop: 0, marginBottom: '1rem' }}>
+              This will permanently remove this design and all its proposals.
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ background: 'var(--danger)', color: '#fff', boxShadow: 'none', width: '100%', marginBottom: '0.75rem' }}
+              onClick={() => {
+                onDelete(confirmDeleteId);
+                setConfirmDeleteId(null);
+              }}
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ width: '100%' }}
+              onClick={() => setConfirmDeleteId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

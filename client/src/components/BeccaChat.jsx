@@ -23,7 +23,7 @@ function todaySessionId(ws) {
   return `${ws}:${y}-${m}-${day}`;
 }
 
-export default function BeccaChat({ topics, profile, memory, workspace, activeSession, onSelectSession, model, onModelChange }) {
+export default function BeccaChat({ topics, profile, memory, workspace, activeSession, onSelectSession, model, onModelChange, onActionExecuted, greeting }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -37,6 +37,20 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   }, [messages]);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // One-time welcome message (e.g. right after company setup) — local only,
+  // not persisted to the conversation history.
+  const greetingShown = useRef(false);
+  useEffect(() => {
+    if (!greeting || greetingShown.current) return;
+    greetingShown.current = true;
+    setMessages(prev => [...prev, {
+      id: 'greeting-' + Date.now(),
+      role: 'becca',
+      content: renderMarkdown(greeting),
+      isHTML: true,
+    }]);
+  }, [greeting]);
 
   useEffect(() => {
     function onClickOutside(e) {
@@ -88,6 +102,7 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
       removeThinking();
       appendBecca(result.reply || 'Done.');
       if (!activeSession) onSelectSession?.(result.session_id || currentSession);
+      if (result.action === 'executed') onActionExecuted?.();
     } catch (err) {
       removeThinking();
       let errMsg = err.message || 'Something went wrong.';
@@ -112,6 +127,7 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
       removeThinking();
       appendBecca(result.reply || 'Done.');
       if (!activeSession) onSelectSession?.(result.session_id || currentSession);
+      if (result.action === 'executed') onActionExecuted?.();
     } catch (err) {
       removeThinking();
       appendBecca(`⚠ ${err.message}`);

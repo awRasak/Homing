@@ -7,6 +7,7 @@ import {
   detectLogoRegion,
 } from '../lib/pdfExtract';
 import { outcomeLabel } from '../lib/googleFonts';
+import { api } from '../api';
 
 const DISPLAY_MAX_WIDTH = 760;
 
@@ -16,7 +17,7 @@ const DISPLAY_MAX_WIDTH = 760;
  * derived (palette, fonts, content, notes). Logo cropping calls
  * onLogoExtracted(dataUrl) separately since it's a manual user action.
  */
-export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAccentPicked }) {
+export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAccentPicked, designId }) {
   const [canvas, setCanvas] = useState(null);
   const [imgSrc, setImgSrc] = useState(null);
   const [palette, setPalette] = useState([]);
@@ -76,6 +77,15 @@ export default function ImportPanel({ file, onExtracted, onLogoExtracted, onAcce
             },
             blocks: firstPage.blocks,
           });
+          // Upload raw PDF to server for structural export
+          if (designId && file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) {
+            try {
+              const arrayBuf = await file.arrayBuffer();
+              await api.uploadSourcePdf(designId, new Blob([arrayBuf], { type: 'application/pdf' }));
+            } catch (e) {
+              console.warn('Failed to upload source PDF to server:', e);
+            }
+          }
         }
       } catch (err) {
         console.error(err);

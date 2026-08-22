@@ -90,6 +90,12 @@ export const api = {
     }).then(handle),
   deleteDesign: (id) =>
     fetch(`${BASE}/designs/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handle),
+  uploadSourcePdf: (designId, pdfBlob) =>
+    fetch(`${BASE}/designs/${designId}/source-pdf`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: pdfBlob,
+    }).then(handle),
 
   listProposals: (designId) =>
     fetch(`${BASE}/designs/${designId}/proposals`, { headers: authHeaders() }).then(handle),
@@ -100,22 +106,6 @@ export const api = {
   getProposal: (designId, proposalId) =>
     fetch(`${BASE}/designs/${designId}/proposals/${proposalId}`, { headers: authHeaders() }).then(handle),
 
-  downloadPDF: async (proposalId) => {
-    const res = await fetch(`${BASE}/proposals/${proposalId}/pdf`, { headers: authHeaders() });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'PDF download failed' }));
-      throw new Error(err.error || 'PDF download failed');
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'proposal.pdf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  },
   generate: (designId, { companyName, notes, provider, model }) =>
     fetch(`${BASE}/designs/${designId}/generate`, {
       method: 'POST',

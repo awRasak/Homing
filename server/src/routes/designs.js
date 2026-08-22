@@ -1,5 +1,12 @@
 import { Router } from 'express';
 import { db, nowIso, newId } from '../db.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PDF_DIR = path.join(__dirname, '..', '..', 'data', 'pdfs');
+fs.mkdirSync(PDF_DIR, { recursive: true });
 
 const router = Router();
 
@@ -25,6 +32,7 @@ function serializeDesign(row) {
     textOverrides: JSON.parse(row.text_overrides || '{}'),
     pages: JSON.parse(row.pages || '[]'),
     pageOverrides: JSON.parse(row.page_overrides || '{}'),
+    sourcePdfPath: row.source_pdf_path || null,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -53,6 +61,37 @@ const EDITABLE_FIELDS = {
 router.get('/', (req, res) => {
   const rows = db.prepare('SELECT * FROM designs ORDER BY sort_order ASC, created_at ASC').all();
   res.json(rows.map(serializeDesign));
+});
+
+// POST /api/designs/:id/source-pdf  (upload raw PDF for structural export)
+router.post('/:id/source-pdf', (req, res) => {
+  const existing = db.prepare('SELECT * FROM designs WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Design not found' });
+
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    const buf = Buffer.concat(chunks);
+    if (buf.length === 0) return res.status(400).json({ error: 'No PDF data' });
+    const filename = `${req.params.id}.pdf`;
+    const filePath = path.join(PDF_DIR, filename);
+    fs.writeFileSync(filePath, buf);
+    db.prepare('UPDATE designs SET source_pdf_path = ?, updated_at = ? WHERE id = ?')
+      .run(filePath, nowIso(), req.params.id);
+    res.json({ ok: true, path: filePath });
+  });
+  req.on('error', (err) => res.status(500).json({ error: err.message }));
+});
+
+// GET /api/designs/:id/source-pdf  (download raw PDF)
+router.get('/:id/source-pdf', (req, res) => {
+  const row = db.prepare('SELECT * FROM designs WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Design not found' });
+  if (!row.source_pdf_path || !fs.existsSync(row.source_pdf_path)) {
+    return res.status(404).json({ error: 'No source PDF stored' });
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.sendFile(row.source_pdf_path);
 });
 
 // POST /api/designs  (create new blank design)

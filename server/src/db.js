@@ -65,6 +65,7 @@ const newColumns = [
   ["text_overrides", "TEXT NOT NULL DEFAULT '{}'"],
   ["pages", "TEXT NOT NULL DEFAULT '[]'"],
   ["page_overrides", "TEXT NOT NULL DEFAULT '{}'"],
+  ["source_pdf_path", "TEXT"],
 ];
 for (const [name, def] of newColumns) {
   if (!existingColumns.has(name)) {
@@ -81,6 +82,12 @@ for (const [name, def] of crNewColumns) {
   if (!crColumns.has(name)) {
     db.exec(`ALTER TABLE campaign_recipients ADD COLUMN ${name} ${def}`);
   }
+}
+
+// Migration: add company_logo to proposals
+const propColumns = new Set(db.prepare('PRAGMA table_info(proposals)').all().map((c) => c.name));
+if (!propColumns.has('company_logo')) {
+  db.exec(`ALTER TABLE proposals ADD COLUMN company_logo TEXT`);
 }
 
 db.exec(`

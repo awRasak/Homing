@@ -21,7 +21,6 @@
     "groq-sdk": "^1.5.0",
     "nodemailer": "^9.0.5",
     "openai": "^7.5.0",
-    "puppeteer-core": "^25.8.0",
     "resend": "^6.20.0"
   }
 }

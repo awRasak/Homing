@@ -511,6 +511,7 @@ export default function BeccaLayout({
   onAddTopic, onRemoveTopic, onUpdateTopic,
   onSaveSettings, onAddReminder, onDismissReminder,
   workspace, beccaSection, onSectionChange, beccaModel, onModelChange, onActionExecuted,
+  chatGreeting,
 }) {
   const [activeSession, setActiveSession] = useState(null);
   const [panelWidth, setPanelWidth] = useState(320);
@@ -593,7 +594,8 @@ export default function BeccaLayout({
         <div className="al-chat">
           <BeccaChat topics={topics} profile={profile} memory={memory}
             workspace={workspace} activeSession={activeSession}
-            onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} onActionExecuted={onActionExecuted} />
+            onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} onActionExecuted={onActionExecuted}
+            greeting={chatGreeting} />
         </div>
       </div>
     </div>

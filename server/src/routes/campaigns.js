@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { db, nowIso, newId } from '../db.js';
 import { sendEmail, resolveTemplate, buildEmailHTML } from '../email.js';
-import { generatePDF } from '../pdf.js';
 
 const router = Router();
 

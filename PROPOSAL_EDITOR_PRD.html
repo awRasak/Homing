@@ -1,0 +1,760 @@
+<title>Proposal Editor PRD</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #f6f7f1;
+    --surface: #ffffff;
+    --surface-2: #edf0e4;
+    --border: #dbe0d0;
+    --ink: #171a14;
+    --ink-muted: #5b6152;
+    --ink-faint: #8a9080;
+    --accent: #6b7a00;
+    --accent-chip-bg: #c8f000;
+    --accent-chip-ink: #171a14;
+    --sev-high-bg: #fbeae8;
+    --sev-high-ink: #97281e;
+    --sev-medium-bg: #fbf0dc;
+    --sev-medium-ink: #7a5400;
+    --sev-low-bg: #e7f0e9;
+    --sev-low-ink: #2f5f42;
+    --status-shipped-bg: #e6f2df;
+    --status-shipped-ink: #3d6b1f;
+    --status-partial-bg: #fbf0dc;
+    --status-partial-ink: #7a5400;
+    --status-dead-bg: #f1e9ea;
+    --status-dead-ink: #7a3d42;
+    --shadow: 0 1px 2px rgba(23,26,20,0.04), 0 6px 20px rgba(23,26,20,0.05);
+    --display: 'Outfit', -apple-system, sans-serif;
+    --body: 'Source Serif 4', Georgia, serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12140f;
+      --surface: #191c14;
+      --surface-2: #1f2318;
+      --border: #2b2f22;
+      --ink: #edf0e4;
+      --ink-muted: #a3a892;
+      --ink-faint: #6e7362;
+      --accent: #c8f000;
+      --accent-chip-bg: #c8f000;
+      --accent-chip-ink: #12140f;
+      --sev-high-bg: #3a1e1c;
+      --sev-high-ink: #ff8a7c;
+      --sev-medium-bg: #3a2e14;
+      --sev-medium-ink: #f0c561;
+      --sev-low-bg: #1c3324;
+      --sev-low-ink: #8fd6ac;
+      --status-shipped-bg: #1c3324;
+      --status-shipped-ink: #8fd6ac;
+      --status-partial-bg: #3a2e14;
+      --status-partial-ink: #f0c561;
+      --status-dead-bg: #331e21;
+      --status-dead-ink: #e08e94;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12140f;
+    --surface: #191c14;
+    --surface-2: #1f2318;
+    --border: #2b2f22;
+    --ink: #edf0e4;
+    --ink-muted: #a3a892;
+    --ink-faint: #6e7362;
+    --accent: #c8f000;
+    --accent-chip-bg: #c8f000;
+    --accent-chip-ink: #12140f;
+    --sev-high-bg: #3a1e1c;
+    --sev-high-ink: #ff8a7c;
+    --sev-medium-bg: #3a2e14;
+    --sev-medium-ink: #f0c561;
+    --sev-low-bg: #1c3324;
+    --sev-low-ink: #8fd6ac;
+    --status-shipped-bg: #1c3324;
+    --status-shipped-ink: #8fd6ac;
+    --status-partial-bg: #3a2e14;
+    --status-partial-ink: #f0c561;
+    --status-dead-bg: #331e21;
+    --status-dead-ink: #e08e94;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--accent-chip-bg); color: var(--accent-chip-ink); }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    max-width: 1180px;
+    margin: 0 auto;
+    align-items: start;
+  }
+
+  /* ---- TOC rail ---- */
+  .toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 40px 20px 40px 32px;
+    border-right: 1px solid var(--border);
+    font-family: var(--display);
+  }
+  .toc-brand {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 4px;
+  }
+  .toc-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 28px;
+  }
+  .toc nav { display: flex; flex-direction: column; gap: 2px; }
+  .toc a {
+    color: var(--ink-muted);
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-radius: 8px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .toc a:hover { background: var(--surface-2); color: var(--ink); }
+  .toc .toc-num {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    margin-right: 8px;
+  }
+  .toc-sub { margin-left: 6px; border-left: 1px solid var(--border); padding-left: 4px; }
+
+  /* ---- Main column ---- */
+  main { padding: 56px 48px 120px; min-width: 0; }
+
+  .kicker {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+
+  h1.doc-title {
+    font-family: var(--display);
+    font-size: clamp(2rem, 4vw, 2.7rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.08;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--ink-muted);
+    margin-bottom: 36px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-meta strong { color: var(--ink); font-weight: 500; }
+
+  .lede {
+    font-size: 1.2rem;
+    font-style: italic;
+    color: var(--ink-muted);
+    max-width: 62ch;
+    margin: 0 0 48px;
+    line-height: 1.55;
+  }
+
+  section.block { margin-bottom: 64px; scroll-margin-top: 24px; }
+
+  h2.section-head {
+    font-family: var(--display);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2.section-head .sec-num {
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 400;
+    color: var(--ink-faint);
+  }
+
+  h3.sub-head {
+    font-family: var(--display);
+    font-size: 1.08rem;
+    font-weight: 700;
+    margin: 32px 0 10px;
+    letter-spacing: -0.005em;
+  }
+
+  p { max-width: 68ch; margin: 0 0 16px; }
+  section.block > p:first-of-type { margin-top: 18px; }
+
+  .max-prose { max-width: 68ch; }
+
+  ul.plain, ol.plain { max-width: 68ch; padding-left: 1.3em; margin: 0 0 16px; }
+  ul.plain li, ol.plain li { margin-bottom: 8px; }
+
+  code, .mono { font-family: var(--mono); font-size: 0.85em; }
+  code {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+  }
+
+  /* ---- Feature cards ---- */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+    margin: 24px 0 8px;
+  }
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+  }
+  .feature-card h4 {
+    font-family: var(--display);
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .feature-card p {
+    font-size: 0.92rem;
+    color: var(--ink-muted);
+    margin: 0;
+  }
+  .feature-card p + p { margin-top: 8px; }
+
+  /* ---- Status / severity pills ---- */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--display);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+  .pill-shipped { background: var(--status-shipped-bg); color: var(--status-shipped-ink); }
+  .pill-partial { background: var(--status-partial-bg); color: var(--status-partial-ink); }
+  .pill-dead    { background: var(--status-dead-bg); color: var(--status-dead-ink); }
+  .pill::before { content: '●'; font-size: 0.6em; }
+
+  .sev {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--display);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+  .sev-high   { background: var(--sev-high-bg); color: var(--sev-high-ink); }
+  .sev-medium { background: var(--sev-medium-bg); color: var(--sev-medium-ink); }
+  .sev-low    { background: var(--sev-low-bg); color: var(--sev-low-ink); }
+
+  /* ---- Issue list ---- */
+  .issue-list { display: flex; flex-direction: column; gap: 2px; margin: 20px 0; }
+  .issue {
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    gap: 16px;
+    padding: 14px 4px;
+    border-bottom: 1px solid var(--border);
+    align-items: start;
+  }
+  .issue:last-child { border-bottom: none; }
+  .issue-title {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 0.94rem;
+    margin-bottom: 4px;
+    color: var(--ink);
+  }
+  .issue-body { font-size: 0.9rem; color: var(--ink-muted); max-width: 62ch; }
+  .issue-body code { font-size: 0.82em; }
+
+  /* ---- Tables ---- */
+  .table-wrap { overflow-x: auto; margin: 20px 0 8px; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; min-width: 560px; }
+  thead th {
+    font-family: var(--display);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: 12px 16px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    font-family: var(--body);
+  }
+  tbody td.mono-cell { font-family: var(--mono); font-size: 0.82rem; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+
+  /* ---- Callouts ---- */
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    border-radius: 4px 12px 12px 4px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    max-width: 68ch;
+    box-shadow: var(--shadow);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout-label {
+    font-family: var(--display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+    display: block;
+  }
+
+  hr.rule { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+
+  footer.doc-footer {
+    max-width: 68ch;
+    padding-top: 24px;
+    margin-top: 40px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--ink-faint);
+    font-family: var(--mono);
+  }
+
+  @media (max-width: 880px) {
+    .shell { grid-template-columns: 1fr; }
+    .toc { display: none; }
+    main { padding: 36px 22px 100px; }
+  }
+</style>
+
+<div class="shell">
+  <aside class="toc">
+    <div class="toc-brand">Homing · Internal</div>
+    <div class="toc-title">Proposal Editor PRD</div>
+    <nav>
+      <a href="#overview"><span class="toc-num">00</span>Overview</a>
+      <a href="#goals"><span class="toc-num">01</span>Problem &amp; goals</a>
+      <a href="#users"><span class="toc-num">02</span>Target user</a>
+      <a href="#setup"><span class="toc-num">03</span>Design setup &amp; import</a>
+      <a href="#preview"><span class="toc-num">04</span>Preview &amp; live editing</a>
+      <a href="#generation"><span class="toc-num">05</span>AI generation</a>
+      <a href="#recipients"><span class="toc-num">06</span>Recipients</a>
+      <a href="#campaigns"><span class="toc-num">07</span>Campaigns &amp; email</a>
+      <a href="#dashboard"><span class="toc-num">08</span>Dashboard</a>
+      <a href="#export"><span class="toc-num">09</span>PDF export</a>
+      <a href="#data-model"><span class="toc-num">10</span>Data model</a>
+      <a href="#issues"><span class="toc-num">11</span>Known issues</a>
+      <a href="#decisions"><span class="toc-num">12</span>Open decisions</a>
+      <a href="#nongoals"><span class="toc-num">13</span>Non-goals</a>
+      <a href="#next"><span class="toc-num">14</span>Recommended next steps</a>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="kicker">Product Requirements — as-built</div>
+    <h1 class="doc-title" id="overview">The Proposal Editor</h1>
+    <div class="doc-meta">
+      <span><strong>Scope</strong> · Design setup, live editing, AI generation, recipients, campaigns, dashboard, export</span>
+      <span><strong>Excludes</strong> · Homin/Becca (chat, watchlist, briefings, content pipeline)</span>
+      <span><strong>Status</strong> · Draft, reverse-documented from current implementation</span>
+    </div>
+
+    <p class="lede">
+      Go from an existing proposal design to a personalized, on-brand document per company — without
+      hiring a designer, and without losing the original document's exact layout. This PRD documents what
+      the Proposal Editor does today, treats the working parts as the accepted spec, and separates that
+      clearly from what's stubbed, duplicated, or dead.
+    </p>
+
+    <section class="block" id="goals">
+      <h2 class="section-head"><span class="sec-num">01</span>Problem &amp; goals</h2>
+      <p>
+        Sending a personalized proposal to many companies today means duplicating a designed document and
+        hand-editing it per recipient — slow, error-prone, and impossible to keep visually consistent once
+        more than one deal type or region is involved. The Proposal Editor's job is to take a real, already-designed
+        proposal (a PDF someone actually uses) and let its owner regenerate the parts that should change per
+        recipient — headline, opening, sourcing — while everything else on the page stays pixel-identical
+        to the original.
+      </p>
+      <p>Three ideas run through the whole feature set:</p>
+      <ul class="plain">
+        <li><strong>The uploaded document is the source of truth.</strong> Branding, layout, and copy are extracted from it, not rebuilt from a generic template.</li>
+        <li><strong>Editing happens in place.</strong> Text blocks are edited directly on the rendered page, not in a disconnected form that redraws a mockup.</li>
+        <li><strong>One design, many companies, many channels.</strong> A design is reused across a recipient list, a bulk email campaign, and a personal dashboard of past sends.</li>
+      </ul>
+    </section>
+
+    <section class="block" id="users">
+      <h2 class="section-head"><span class="sec-num">02</span>Target user</h2>
+      <p class="max-prose">
+        Someone doing outreach at volume — a founder, an agency, a small BD team — who already has one or
+        more designed proposals and needs tailored versions sent to many prospects without a designer or
+        developer in the loop. They think in terms of <em>designs</em> (a proposal template with its own
+        branding) and <em>companies</em> (one generated, personalized proposal per recipient).
+      </p>
+    </section>
+
+    <section class="block" id="setup">
+      <h2 class="section-head"><span class="sec-num">03</span>Design setup &amp; import</h2>
+      <p>
+        A design captures everything reusable across every proposal generated from it: sender identity, brand
+        color, fonts, a writing-style sample, and the static sections that don't change per recipient (pricing,
+        process, "why us"). It can be built from scratch, or — the common path — extracted from an uploaded PDF.
+      </p>
+
+      <h3 class="sub-head">Import pipeline</h3>
+      <p class="max-prose">
+        Every page of the uploaded file is rasterized client-side. From the first page, the editor pulls a
+        dominant-color palette (click-to-sample any pixel as an override), a heuristically detected logo region
+        (drag-to-crop or accept the detection), and — PDF only, not scans — the document's fonts and structural
+        content: sender/recipient labels, an email address, a detected headline, and heading-led sections that
+        become the design's static content.
+      </p>
+
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>Branding capture <span class="pill pill-shipped">Shipped</span></h4>
+          <p>Sender name, tagline, accent color, logo, hero image, headline/body font (curated Google Fonts list).</p>
+        </div>
+        <div class="feature-card">
+          <h4>Content extraction <span class="pill pill-shipped">Shipped</span></h4>
+          <p>Style-sample text, static sections, detected headline, sender/recipient/email regex matches. Text-bearing PDFs only — scanned images get colors and a logo, nothing else.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Non-destructive re-import <span class="pill pill-shipped">Shipped</span></h4>
+          <p>Re-uploading a file only fills blanks — it never overwrites a field you've already edited.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Embedded image extraction <span class="pill pill-dead">Built, unused</span></h4>
+          <p>A real CTM-tracking walk of the PDF locates and crops embedded photos/logos with correct positioning — computed on every import, then dropped before it reaches the design record.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <span class="callout-label">Cosmetic-only control</span>
+        <p>The setup form's "Save" button is decorative — every field already autosaves on change. It flashes a checkmark but calls nothing.</p>
+      </div>
+    </section>
+
+    <section class="block" id="preview">
+      <h2 class="section-head"><span class="sec-num">04</span>Preview &amp; live editing</h2>
+      <p>
+        The editor renders one of two ways, chosen automatically by whether a design has an uploaded source page.
+      </p>
+      <h3 class="sub-head">Live-PDF mode (has an uploaded source)</h3>
+      <p class="max-prose">
+        The rendered page image <em>is</em> the preview. Each detected line of text sits under an invisible,
+        precisely-positioned editable overlay — masked to match the surrounding page color until you click in,
+        at which point it reveals itself for editing. Nothing about the original layout, imagery, or color moves.
+      </p>
+      <h3 class="sub-head">Templated mode (no uploaded source)</h3>
+      <p class="max-prose">
+        A generic, semantically-styled document assembled from the design's brand tokens and the AI-generated
+        copy fields directly — headline, opening, body paragraphs, closing, static sections.
+      </p>
+      <div class="callout">
+        <span class="callout-label">Gap between the two modes</span>
+        <p>
+          In live-PDF mode — the common path, since onboarding nudges toward uploading a real document — AI-generated
+          copy has nowhere to go except the headline, which gets auto-written into its matching text block. The
+          <code>opening</code>, <code>bodyParagraphs</code>, and <code>closing</code> the model generates are saved
+          and visible in history, but never appear on the actual document unless someone manually copies them into
+          a block.
+        </p>
+      </div>
+    </section>
+
+    <section class="block" id="generation">
+      <h2 class="section-head"><span class="sec-num">05</span>AI generation</h2>
+      <p class="max-prose">
+        Two equivalent entry points — a full form (company + optional notes) and a single-line chat bar — drive
+        the same generation call. Four providers are wired (Anthropic, OpenAI, Gemini, Groq); only ones with a
+        configured API key are offered. The prompt explicitly avoids repeating static sections and treats the
+        design's detected headline as a structural hint, not a template to copy.
+      </p>
+      <div class="callout">
+        <span class="callout-label">History is really "latest per company"</span>
+        <p>
+          Proposals are stored one row per <code>(design, company)</code> pair. Regenerating for a company you've
+          already generated for overwrites that row — there's no version history, in the editor, in batch
+          generation, or in campaign sends.
+        </p>
+      </div>
+    </section>
+
+    <section class="block" id="recipients">
+      <h2 class="section-head"><span class="sec-num">06</span>Recipients</h2>
+      <p class="max-prose">
+        A standalone address book, independent of any one design: search, tag-filter, add/edit/delete, and a
+        CSV importer with flexible column-name matching (email, company, first/last name) that dedupes against
+        existing rows by email.
+      </p>
+      <div class="callout">
+        <span class="callout-label">CSV import drops extra columns</span>
+        <p>Any CSV column beyond the recognized fields is silently discarded rather than folded into custom fields.</p>
+      </div>
+    </section>
+
+    <section class="block" id="campaigns">
+      <h2 class="section-head"><span class="sec-num">07</span>Campaigns &amp; email</h2>
+      <p class="max-prose">
+        A campaign pairs one design with a subject-line template (merge fields like <code>{{company_name}}</code>)
+        and a recipient list, then sends — via Resend or SMTP — generating a proposal on the fly for any recipient
+        who doesn't already have one for that design. Sends embed open-tracking and click-tracking links.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Behavior</th><th>Status</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Serial send, no concurrency limit</td><td><span class="sev sev-low">Low</span></td><td>No rate limiting or retry/backoff on individual send failures.</td></tr>
+            <tr><td>Click-tracking coverage</td><td><span class="sev sev-medium">Medium</span></td><td>Only links inside the opening paragraph are tracked — body/closing links aren't, despite the email template supporting it.</td></tr>
+            <tr><td>Silent mid-send generation</td><td><span class="sev sev-medium">Medium</span></td><td>A campaign send can trigger AI generation for recipients with no existing proposal, with no upfront warning.</td></tr>
+            <tr><td><code>email_events</code> table</td><td><span class="sev sev-low">Low</span></td><td>Every open/click is logged here in full, but nothing reads it back — no per-event history is ever surfaced.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="block" id="dashboard">
+      <h2 class="section-head"><span class="sec-num">08</span>Dashboard</h2>
+      <p class="max-prose">
+        Six rollups — proposals, recipients, campaigns, emails sent, open rate, click rate — above a "continue
+        designing" gallery of recent proposals, styled in each one's own design accent, that jumps straight back
+        into the editor.
+      </p>
+      <div class="callout">
+        <span class="callout-label">Refresh timing</span>
+        <p>The proposal gallery only refetches when you re-enter the Proposals section from the nav rail, not when you switch to the Dashboard sub-tab from elsewhere inside it — a fresh generation can look stale until you leave and come back.</p>
+      </div>
+    </section>
+
+    <section class="block" id="export">
+      <h2 class="section-head"><span class="sec-num">09</span>PDF export</h2>
+      <p class="max-prose">
+        Two entirely separate export pipelines exist, chosen implicitly by whether the design has an uploaded
+        source page — not by explicit user choice.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Path</th><th>Used when</th><th>Engine</th><th>Font fidelity</th></tr></thead>
+          <tbody>
+            <tr><td>Client-side</td><td>Design has an uploaded source (the common case)</td><td class="mono-cell">pdf-lib, in-browser</td><td>Fixed to Helvetica — ignores the design's configured fonts</td></tr>
+            <tr><td>Server-side</td><td>Design was built from scratch, no upload</td><td class="mono-cell">Puppeteer + local Chrome</td><td>Matches the on-screen preview</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <span class="callout-label">Deployment risk</span>
+        <p>The server path needs a locally installed Chrome/Chromium binary — no bundled browser — so it will fail outright on most hosting platforms unless one is separately provisioned.</p>
+      </div>
+    </section>
+
+    <section class="block" id="data-model">
+      <h2 class="section-head"><span class="sec-num">10</span>Data model</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Table</th><th>Holds</th><th>Notable constraint</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-cell">designs</td><td>Branding, fonts, static sections, both the legacy single-page and current multi-page source/text-block representations</td><td>—</td></tr>
+            <tr><td class="mono-cell">proposals</td><td>Generated copy per company</td><td class="mono-cell">UNIQUE(design_id, company_name)</td></tr>
+            <tr><td class="mono-cell">recipients</td><td>Address book</td><td class="mono-cell">UNIQUE(email)</td></tr>
+            <tr><td class="mono-cell">campaigns</td><td>Send configuration + rollup counters</td><td>—</td></tr>
+            <tr><td class="mono-cell">campaign_recipients</td><td>Per-recipient send status, open/click timestamps</td><td class="mono-cell">UNIQUE(campaign_id, recipient_id)</td></tr>
+            <tr><td class="mono-cell">email_events</td><td>Raw append-only open/click log</td><td>Write-only — nothing reads it</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <span class="callout-label">Overlapping representations</span>
+        <p>
+          <code>source_image_data_url</code> / <code>source_text_blocks</code> / <code>text_overrides</code> and
+          the newer <code>pages</code> / <code>page_overrides</code> columns describe the same thing — a design's
+          page image plus its editable text — and both get written on every import. Ad-hoc <code>ALTER TABLE</code>
+          migrations gated on <code>PRAGMA table_info</code> checks stand in for a versioned migration system.
+        </p>
+      </div>
+    </section>
+
+    <section class="block" id="issues">
+      <h2 class="section-head"><span class="sec-num">11</span>Known issues</h2>
+      <p class="max-prose">Confirmed by reading the current implementation, not inferred.</p>
+      <div class="issue-list">
+        <div class="issue">
+          <span class="sev sev-medium">Medium</span>
+          <div>
+            <div class="issue-title">Generated body copy has no home in live-PDF mode</div>
+            <div class="issue-body">Only the headline is auto-applied to the page; opening/body/closing text exists only in history for the common (uploaded-document) path.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev-medium sev">Medium</span>
+          <div>
+            <div class="issue-title">Two non-unified PDF export pipelines</div>
+            <div class="issue-body">Client pdf-lib vs. server Puppeteer, routed by an incidental field rather than a deliberate choice; the client path also hardcodes Helvetica regardless of the design's fonts.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-medium">Medium</span>
+          <div>
+            <div class="issue-title">Schema duplication for page/text-block state</div>
+            <div class="issue-body">Legacy single-page columns and current multi-page columns are both populated on every import.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title">"History" is one row per company, not versions</div>
+            <div class="issue-body">Regenerating overwrites the previous proposal for that company — in the editor, batch generation, and campaign sends alike.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title">Embedded-image extraction is computed and discarded</div>
+            <div class="issue-body">A working CTM-tracking image locator runs on every import; its output never reaches the saved design.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title">Dashboard proposal list can go stale</div>
+            <div class="issue-body">Refetches on Proposals-section entry, not on switching to the Dashboard sub-tab.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title">Click-tracking only covers the opening paragraph</div>
+            <div class="issue-body">Body and closing links aren't wrapped, though the email template already supports it.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title">Cosmetic-only "Save" button in Design Setup</div>
+            <div class="issue-body">All fields already autosave on change; the button calls nothing.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title">CSV recipient import drops unrecognized columns</div>
+            <div class="issue-body">Extra columns aren't folded into custom fields — they're discarded.</div>
+          </div>
+        </div>
+        <div class="issue">
+          <span class="sev sev-low">Low</span>
+          <div>
+            <div class="issue-title"><code>font_detection_note</code> column never written</div>
+            <div class="issue-body">Schema and API support it; no client code populates it.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="decisions">
+      <h2 class="section-head"><span class="sec-num">12</span>Open decisions</h2>
+      <ol class="plain">
+        <li><strong>Unify PDF export</strong> onto one engine, or make the choice between them explicit and font-accurate on both sides.</li>
+        <li><strong>Give generated body copy a destination in live-PDF mode</strong> — map it onto matching blocks by role, or add an explicit insertion affordance.</li>
+        <li><strong>Decide on real proposal history</strong> if multiple versions per company ever need to coexist — the schema would need to change from its current unique-per-company shape.</li>
+        <li><strong>Collapse the page-state schema duplication</strong> once nothing still depends on the legacy single-page columns.</li>
+      </ol>
+    </section>
+
+    <section class="block" id="nongoals">
+      <h2 class="section-head"><span class="sec-num">13</span>Non-goals</h2>
+      <ul class="plain">
+        <li>Full rich-text document editing or drag-and-drop layout design.</li>
+        <li>Acting as a CRM — recipients and campaigns exist to drive sends, not to replace one.</li>
+        <li>OCR or content extraction from scanned (non-text) PDFs.</li>
+        <li>True per-event analytics surfacing (individual opens/clicks by IP/user-agent) — the data is logged, but exposing it is out of scope until a use case demands it.</li>
+      </ul>
+    </section>
+
+    <section class="block" id="next">
+      <h2 class="section-head"><span class="sec-num">14</span>Recommended next steps</h2>
+      <ol class="plain">
+        <li>Resolve the PDF export split first — it's the highest-visibility inconsistency (fonts visibly wrong in downloads) and blocks confidently recommending the tool for real sends.</li>
+        <li>Give body/closing copy a real destination in live-PDF mode, since that's the primary path onboarding drives people toward.</li>
+        <li>Delete or wire up the dead embedded-image extraction — it's fully built and currently wasted.</li>
+        <li>Decide the versioned-history question before campaign volume makes the current overwrite-on-regenerate behavior a real support burden.</li>
+      </ol>
+    </section>
+
+    <footer class="doc-footer">
+      Compiled from a direct read of the current codebase — file paths and line numbers on request. Treat as living; re-verify before relying on any specific line reference after further changes.
+    </footer>
+  </main>
+</div>

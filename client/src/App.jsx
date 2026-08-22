@@ -68,6 +68,9 @@ export default function App() {
   const [beccaSettings, setBeccaSettings] = useState({ dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00' });
   const [beccaSettingsOpen, setBeccaSettingsOpen] = useState(false);
   const [beccaModel, setBeccaModel] = useState(() => localStorage.getItem('homin:model') || 'gpt-oss-20b');
+  const [showCompanySetup, setShowCompanySetup] = useState(false);
+  const [setupPhase, setSetupPhase] = useState(null); // null | 'saving' | 'complete'
+  const [chatGreeting, setChatGreeting] = useState('');
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -80,6 +83,7 @@ export default function App() {
   const saveTimers = useRef({});
   const savedResetTimer = useRef(null);
   const pendingProposalId = useRef(null);
+  const setupTimer = useRef(null);
 
   function toggleTheme() {
     setTheme((prev) => {
@@ -108,61 +112,68 @@ export default function App() {
     window.addEventListener('beforeunload', reset);
 
     (async () => {
-      try {
-        // Check auth
-        const token = getAuthToken();
-        if (token) {
-          try {
-            const me = await auth.me();
-            setAuthUser(me.user);
-          } catch {
-            setAuthToken(null);
-          }
+      // Check auth
+      const token = getAuthToken();
+      if (token) {
+        try {
+          const me = await auth.me();
+          setAuthUser(me.user);
+        } catch {
+          setAuthToken(null);
         }
-        setAuthLoading(false);
-
-        const status = await api.status();
-        setProviders(status.providers || {});
-        setActiveProvider(status.activeProvider || 'anthropic');
-      } catch { /* providers optional */ }
-
-      try {
-        const list = await api.listDesigns();
-        if (list.length === 0) {
-          const created = await api.createDesign({});
-          setDesigns([created]);
-          setActiveDesignId(created.id);
-          localStorage.setItem(ACTIVE_ID_KEY, created.id);
-          setShowOnboarding(true);
-        } else {
-          setDesigns(list);
-          const saved = localStorage.getItem(ACTIVE_ID_KEY);
-          const initialId = list.find((d) => d.id === saved)?.id || list[0].id;
-          setActiveDesignId(initialId);
-        }
-      } catch (err) {
-        console.error('Failed to load designs', err);
       }
-
-      // Load Becca data
-      try {
-        const [topics, profile, memory, reminders, briefings, settings] = await Promise.all([
-          api.becca.listTopics(),
-          api.becca.getProfile(),
-          api.becca.listMemory(),
-          api.becca.listReminders(),
-          api.becca.listBriefings(100),
-          api.becca.getSettings(),
-        ]);
-        setBeccaTopics(topics || []);
-        setBeccaProfile(profile);
-        setBeccaMemory(memory || []);
-        setBeccaReminders(reminders || []);
-        setBeccaBriefings(briefings || []);
-        if (settings) setBeccaSettings(settings);
-      } catch { /* becca not available */ }
+      setAuthLoading(false);
+      await loadWorkspaceData();
     })();
   }, []);
+
+  // Loads providers, designs, and Becca data — safe to call again after the
+  // auth token becomes available (bootstrap runs before login/signup).
+  async function loadWorkspaceData() {
+    try {
+      const status = await api.status();
+      setProviders(status.providers || {});
+      setActiveProvider(status.activeProvider || 'anthropic');
+    } catch { /* providers optional */ }
+
+    try {
+      const list = await api.listDesigns();
+      if (list.length === 0) {
+        const created = await api.createDesign({});
+        setDesigns([created]);
+        setActiveDesignId(created.id);
+        localStorage.setItem(ACTIVE_ID_KEY, created.id);
+        setShowOnboarding(true);
+      } else {
+        setDesigns((prev) => prev.length ? prev : list);
+        const saved = localStorage.getItem(ACTIVE_ID_KEY);
+        const initialId = list.find((d) => d.id === saved)?.id || list[0].id;
+        setActiveDesignId(initialId);
+      }
+    } catch (err) {
+      console.error('Failed to load designs', err);
+    }
+
+    let loaded = { topics: [], briefings: [] };
+    try {
+      const [topics, profile, memory, reminders, briefings, settings] = await Promise.all([
+        api.becca.listTopics(),
+        api.becca.getProfile(),
+        api.becca.listMemory(),
+        api.becca.listReminders(),
+        api.becca.listBriefings(100),
+        api.becca.getSettings(),
+      ]);
+      loaded = { topics: topics || [], briefings: briefings || [] };
+      setBeccaTopics(topics || []);
+      setBeccaProfile(profile);
+      setBeccaMemory(memory || []);
+      setBeccaReminders(reminders || []);
+      setBeccaBriefings(briefings || []);
+      if (settings) setBeccaSettings(settings);
+    } catch { /* becca not available */ }
+    return loaded;
+  }
 
   useEffect(() => {
     if (!activeDesignId) return;
@@ -543,6 +554,34 @@ export default function App() {
     setBeccaSection(target);
   }
 
+  async function handleCompanySetupComplete() {
+    setShowCompanySetup(false);
+    setSetupPhase('saving');
+    try {
+      const profile = await api.becca.getProfile();
+      setBeccaProfile(profile || null);
+    } catch { /* keep whatever we have */ }
+    setTimeout(() => setSetupPhase('complete'), 1600);
+    setupTimer.current = setTimeout(finishCompanySetup, 3400);
+  }
+
+  function finishCompanySetup() {
+    if (setupTimer.current) { clearTimeout(setupTimer.current); setupTimer.current = null; }
+    if (!setupPhase) return;
+    const firstName = (beccaProfile?.name || authUser?.name || '').split(' ')[0];
+    const company = beccaProfile?.company_name;
+    setSetupPhase(null);
+    setSection('becca');
+    setBeccaSection('chat');
+    setChatGreeting(
+      `Welcome aboard${firstName ? `, ${firstName}` : ''}! 🎉 ` +
+      (company
+        ? `I've got **${company}** locked in as your context — I'll tailor everything from briefings to research around it. `
+        : `Your space is all set up. `) +
+      `Try a suggestion below, ask me anything, or say \`track [topic]\` and I'll start watching it for you.`
+    );
+  }
+
   async function handleBeccaDismissReminder(id) {
     await api.becca.deleteReminder(id);
     setBeccaReminders(prev => prev.filter(r => r.id !== id));
@@ -563,6 +602,10 @@ export default function App() {
         : await auth.signup(authEmail, authPassword, authName);
       setAuthToken(result.token);
       setAuthUser(result.user);
+      // Workspace data was never fetched pre-auth — load it now that we have a token.
+      const workspace = await loadWorkspaceData();
+      if (authMode === 'signup') setShowCompanySetup(true);
+      else maybeGreetOnLogin(result.user, workspace);
     } catch (err) {
       setAuthError(err.message);
     }
@@ -571,6 +614,32 @@ export default function App() {
   function handleLogout() {
     setAuthToken(null);
     setAuthUser(null);
+    setChatGreeting('');
+  }
+
+  // First sign-in of the day → time-based greeting from Homin in chat.
+  function maybeGreetOnLogin(user, { topics, briefings }) {
+    const today = new Date().toDateString();
+    const key = `homin:greeted:${user.id}`;
+    if (localStorage.getItem(key) === today) return;
+    localStorage.setItem(key, today);
+
+    const h = new Date().getHours();
+    const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+    const firstName = (user.name || '').split(' ')[0];
+    const hello = `Good ${part}${firstName ? `, ${firstName}` : ''}! 👋`;
+
+    const activeTopics = topics.filter(t => t.status === 'active').length;
+    let body;
+    if (activeTopics === 0 && briefings.length === 0) {
+      body = "What would you like to get done today?\n\nAsk me anything, say `track [topic]` to start watching something, or `brief me` for a catch-up whenever you're ready.";
+    } else {
+      const bits = [];
+      if (activeTopics > 0) bits.push(`**${activeTopics} active topic${activeTopics > 1 ? 's' : ''}** on your watchlist`);
+      if (briefings.length > 0) bits.push(`your latest briefing is ready`);
+      body = `You've got ${bits.join(' and ')}. Say **brief me** for the latest, or tell me what you'd like to get done.`;
+    }
+    setChatGreeting(`${hello} ${body}`);
   }
 
   function handleAuthSwitch() {
@@ -638,7 +707,10 @@ export default function App() {
             <input placeholder="Password" className="auth-input" type="text"
               value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
             {authError && <div className="auth-error">{authError}</div>}
-            <button type="submit" className="auth-submit">
+            <button
+              type="submit"
+              className={`auth-submit ${authEmail.trim() && authPassword.trim() ? 'auth-submit-ready' : ''}`}
+            >
               {authMode === 'login' ? 'Sign in' : 'Create account'}
             </button>
           </form>
@@ -715,18 +787,14 @@ export default function App() {
               onAddReminder={handleBeccaAddReminder} onDismissReminder={handleBeccaDismissReminder}
               beccaSection={beccaSection} onSectionChange={setBeccaSection}
               beccaModel={beccaModel} onModelChange={(m) => { setBeccaModel(m); localStorage.setItem('homin:model', m); }}
+              chatGreeting={chatGreeting}
               onActionExecuted={() => {
                 api.becca.listTopics().then(setBeccaTopics).catch(() => {});
                 api.becca.listReminders().then(setBeccaReminders).catch(() => {});
                 api.becca.listBriefings().then(setBeccaBriefings).catch(() => {});
               }} />
-            {beccaSettingsOpen && (
-              <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
-                onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}
-                onSaveSettings={handleBeccaSaveSettings} onClose={() => setBeccaSettingsOpen(false)} />
-            )}
-          </div>
-        ) : section === 'proposals' ? (
+           </div>
+         ) : section === 'proposals' ? (
           <div className="section-body proposals-section">
             <div className="becca-topbar">
               <div className="becca-topbar-tabs">
@@ -742,7 +810,7 @@ export default function App() {
             <div className="becca-content">
               {proposalTab === 'editor' && (
                 <div className="editor-layout">
-                  {showOnboarding && (
+                  {showOnboarding && !showCompanySetup && (
                     <OnboardingModal onUpload={handleOnboardingUpload} onSkip={handleOnboardingSkip} />
                   )}
                   <div className="editor-sidebar no-print">
@@ -827,6 +895,29 @@ export default function App() {
                           <div className="proposal-actions no-print">
                             <button type="button" className="btn-secondary" onClick={handleExport}>Download PDF</button>
                             <button type="button" className="btn-secondary" onClick={() => setEditOpen(true)}>Edit proposal</button>
+                            <label className="btn-secondary logo-upload-label">
+                              Company logo
+                              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file || !currentProposal) return;
+                                const reader = new FileReader();
+                                reader.onload = async () => {
+                                  const dataUrl = reader.result;
+                                  setCurrentProposal((prev) => prev ? { ...prev, companyLogo: dataUrl } : prev);
+                                  setProposals((prev) => prev.map((p) => p.id === currentProposal.id ? { ...p, companyLogo: dataUrl } : p));
+                                  try {
+                                    await fetch(`${import.meta.env.VITE_API_BASE || '/api'}/proposals/${currentProposal.id}`, {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('homing_token') ? { Authorization: `Bearer ${localStorage.getItem('homing_token')}` } : {}) },
+                                      body: JSON.stringify({ companyLogo: dataUrl }),
+                                    });
+                                  } catch (err) {
+                                    console.error('Failed to save company logo', err);
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }} />
+                            </label>
                           </div>
                         )}
                         {generating && (
@@ -946,6 +1037,39 @@ export default function App() {
         providers={providers}
         activeProvider={activeProvider}
       />
+
+      {(beccaSettingsOpen || showCompanySetup) && (
+        <BeccaSettings profile={beccaProfile} memory={beccaMemory} settings={beccaSettings}
+          onSaveProfile={handleBeccaSaveProfile} onAddMemory={handleBeccaAddMemory} onRemoveMemory={handleBeccaRemoveMemory}
+          onSaveSettings={handleBeccaSaveSettings}
+          onComplete={showCompanySetup ? handleCompanySetupComplete : undefined}
+          onClose={() => {
+            setBeccaSettingsOpen(false);
+            setShowCompanySetup(false);
+            setSection('becca');
+            setBeccaSection('chat');
+          }} />
+      )}
+
+      {setupPhase && (
+        <div className="setup-celebrate-overlay">
+          <div className="setup-celebrate-card">
+            {setupPhase === 'saving' ? (
+              <>
+                <div className="setup-spinner" />
+                <div className="setup-celebrate-title">Setting up your space…</div>
+                <div className="setup-celebrate-sub">Saving your company context</div>
+              </>
+            ) : (
+              <>
+                <button type="button" className="setup-complete-check" onClick={finishCompanySetup}>✓</button>
+                <div className="setup-celebrate-title">You're all set!</div>
+                <div className="setup-celebrate-sub">Taking you to Homin…</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

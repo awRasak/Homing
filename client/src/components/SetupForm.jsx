@@ -46,6 +46,7 @@ export default function SetupForm({ design, onChange, importFile, onImportFile }
   }
 
   return (
+    <>
     <div className="setup-form">
       <section className="form-section">
         <label className="field">
@@ -185,11 +186,12 @@ export default function SetupForm({ design, onChange, importFile, onImportFile }
         />
       </section>
 
+      </div>
       <div className="setup-save-bar">
         <button type="button" className="btn-primary setup-save-btn" onClick={handleSave}>
           {saved ? '✓ Saved' : 'Save setup'}
         </button>
       </div>
-    </div>
+    </>
   );
 }

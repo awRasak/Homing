@@ -37,7 +37,7 @@ function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMemory, onRemoveMemory, onSaveSettings, settings, onClose }) {
+export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMemory, onRemoveMemory, onSaveSettings, settings, onClose, onComplete }) {
   const [tab, setTab] = useState('company');
   const [companyName, setCompanyName] = useState('');
   const [companyDescription, setCompanyDescription] = useState('');
@@ -61,6 +61,7 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
   const [docContent, setDocContent] = useState('');
   const [memInput, setMemInput] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -151,25 +152,34 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
     }
   }
 
-  function handleSave() {
-    onSaveProfile({
-      company_name: companyName,
-      company_description: companyDescription,
-      website,
-      company_size: companySize,
-      key_products: keyProducts.map(p => p.trim()).filter(Boolean),
-      competitors: competitors.map(c => c.trim()).filter(Boolean),
-      target_market: targetMarket,
-      value_proposition: valueProposition,
-      industries,
-      name,
-      role,
-      location,
-      usecases,
-      links: links.map(l => l.trim()).filter(Boolean)
-    });
-    onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
-    onClose();
+  async function handleSave() {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSaveProfile({
+        company_name: companyName,
+        company_description: companyDescription,
+        website,
+        company_size: companySize,
+        key_products: keyProducts.map(p => p.trim()).filter(Boolean),
+        competitors: competitors.map(c => c.trim()).filter(Boolean),
+        target_market: targetMarket,
+        value_proposition: valueProposition,
+        industries,
+        name,
+        role,
+        location,
+        usecases,
+        links: links.map(l => l.trim()).filter(Boolean)
+      });
+      await onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
+      if (onComplete) onComplete();
+      else onClose();
+    } catch {
+      alert('Could not save your profile — try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   const initials = name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?';
@@ -363,8 +373,8 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
         </div>
 
         <div className="modal-footer">
-          <button className="btn-cancel" onClick={onClose}>Cancel</button>
-          <button className="btn-save-profile" onClick={handleSave}>Save ✦</button>
+          <button className="btn-cancel" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn-save-profile" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save ✦'}</button>
         </div>
       </div>
     </div>

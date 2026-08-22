@@ -18,12 +18,6 @@ export default function ChatBar({ onGenerate, generating, recentCompanies, provi
 
   return (
     <div className="chat-bar-wrap">
-      {generating && (
-        <div className="generating-indicator">
-          <div className="generating-spinner" />
-          <span>Generating your proposal…</span>
-        </div>
-      )}
       {recentCompanies.length > 0 && (
         <div className="chat-pills">
           {recentCompanies.slice(0, 4).map((name) => (

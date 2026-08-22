@@ -48,6 +48,7 @@ router.post('/:id/generate', async (req, res) => {
     designId: row.design_id,
     companyName: row.company_name,
     bodyParagraphs: JSON.parse(row.body_paragraphs || '[]'),
+    companyLogo: row.company_logo || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
