@@ -1,7 +1,21 @@
 import crypto from 'crypto';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
 import { db } from './db.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SECRET_FILE = path.join(__dirname, '..', 'data', '.jwt_secret');
+
+function getJwtSecret() {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (existsSync(SECRET_FILE)) return readFileSync(SECRET_FILE, 'utf-8').trim();
+  const secret = crypto.randomBytes(32).toString('hex');
+  try { writeFileSync(SECRET_FILE, secret, { mode: 0o600 }); } catch {}
+  return secret;
+}
+
+const JWT_SECRET = getJwtSecret();
 const ALG = 'sha256';
 
 // ── Password hashing (scrypt, no bcrypt dep) ──
