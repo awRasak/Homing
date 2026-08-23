@@ -19,21 +19,6 @@ export default function ChatBar({ onGenerate, generating, recentCompanies, provi
   return (
     <div className="chat-bar-wrap">
       {genError && <div className="chat-error">{genError}</div>}
-      {recentCompanies.length > 0 && (
-        <div className="chat-pills">
-          {recentCompanies.slice(0, 4).map((name) => (
-            <button
-              key={name}
-              type="button"
-              className="chat-pill"
-              disabled={generating}
-              onClick={() => onGenerate({ companyName: name, notes: '', provider })}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-      )}
       <form className="chat-bar" onSubmit={submit}>
         {configuredProviders.length > 1 && (
           <select

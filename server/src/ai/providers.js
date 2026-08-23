@@ -33,6 +33,26 @@ Return your result as valid JSON with exactly these keys:
   "closing": "string"
 }`;
 
+// Gemini structured output uses its own OpenAPI-subset Schema type
+// (uppercase type names), declared natively so the model cannot emit prose.
+const GEMINI_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    headline: { type: 'STRING', description: 'A short, punchy headline tailored to the recipient company.' },
+    opening: { type: 'STRING', description: 'One opening paragraph that hooks the specific recipient.' },
+    bodyParagraphs: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      minItems: 2,
+      maxItems: 3,
+      description: '2-3 body paragraphs tailored to the recipient, distinct from the static sections.',
+    },
+    closing: { type: 'STRING', description: 'A closing paragraph with a clear call to action.' },
+  },
+  required: ['headline', 'opening', 'bodyParagraphs', 'closing'],
+  propertyOrdering: ['headline', 'opening', 'bodyParagraphs', 'closing'],
+};
+
 function buildPrompt({ design, companyName, notes }) {
   const staticSections = JSON.parse(design.static_sections || '[]');
   const staticSummary = staticSections
@@ -100,14 +120,21 @@ async function generateGemini({ prompt, apiKey, model }) {
   const genAI = new GoogleGenerativeAI(apiKey);
   const generativeModel = genAI.getGenerativeModel({
     model: model || 'gemini-2.0-flash',
-    generationConfig: { temperature: 0.7 },
+    generationConfig: {
+      temperature: 0.7,
+      responseMimeType: 'application/json',
+      responseSchema: GEMINI_RESPONSE_SCHEMA,
+    },
   });
-  const result = await generativeModel.generateContent(
-    `${prompt}\n\nRespond with valid JSON only, no markdown fences.`
-  );
+  const result = await generativeModel.generateContent(prompt);
   const text = result.response.text();
-  const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
-  const parsed = JSON.parse(cleaned);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Defensive only — native JSON mode should never hit this.
+    parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim());
+  }
   if (!parsed.headline || !parsed.opening || !parsed.bodyParagraphs || !parsed.closing) {
     throw new Error('Invalid structured output from Gemini');
   }
@@ -117,7 +144,10 @@ async function generateGemini({ prompt, apiKey, model }) {
 async function generateGroq({ prompt, apiKey, model }) {
   const client = new Groq({ apiKey });
   const response = await client.chat.completions.create({
-    model: model || 'meta-llama/llama-4-scout-17b-16e-instruct',
+    // Kept in sync with the Groq models actually available to this account
+    // (see GROQ_MODELS in routes/becca.js) — llama-3.3/llama-4 model IDs
+    // that used to work here have since been removed from Groq's catalog.
+    model: model || 'openai/gpt-oss-20b',
     messages: [
       {
         role: 'system',

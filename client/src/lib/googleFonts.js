@@ -19,6 +19,7 @@ export const CURATED_GOOGLE_FONTS = [
   'Carlito',
   'Georgia',
   'DM Sans',
+  'Lexend',
   'Space Grotesk',
 ];
 

@@ -947,13 +947,16 @@ export default function App() {
 
                               return (
                                 <>
-                                  <LivePreview
+                                   <LivePreview
                                     sourceImageDataUrl={displayDataUrl}
                                     sourceImageWidth={displayWidth}
                                     sourceImageHeight={displayHeight}
                                     sourceTextBlocks={displayBlocks}
                                     textOverrides={displayOverrides}
                                     onOverride={handleTextOverride}
+                                    headlineFont={activeDesign.headlineFont}
+                                    bodyFont={activeDesign.bodyFont}
+                                    backgroundColor={activeDesign.backgroundColor || '#ffffff'}
                                   />
                                   {isMultiPage && (
                                     <div className="pagination-controls no-print">
@@ -1021,14 +1024,6 @@ export default function App() {
                             <div className="generate-progress-track">
                               <div className="generate-progress-fill" />
                             </div>
-                          </div>
-                        )}
-                        {!currentProposal && activeDesign && !generating && (
-                          <div className="empty-state no-print">
-                            <div className="empty-step-hint">
-                              Type the company you're pitching to below — Homin drafts a tailored proposal from your design.
-                            </div>
-                            <button type="button" className="btn-primary" onClick={() => setEditOpen(true)}>Edit your design</button>
                           </div>
                         )}
                         <div className="no-print">

@@ -67,6 +67,7 @@ try {
     ["pages", "TEXT NOT NULL DEFAULT '[]'"],
     ["page_overrides", "TEXT NOT NULL DEFAULT '{}'"],
     ["source_pdf_path", "TEXT"],
+    ["background_color", "TEXT NOT NULL DEFAULT '#ffffff'"],
   ];
   for (const [name, def] of newColumns) {
     if (!existingColumns.has(name)) {

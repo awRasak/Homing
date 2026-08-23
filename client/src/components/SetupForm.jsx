@@ -73,6 +73,18 @@ export default function SetupForm({ design, onChange, importFile, onImportFile }
           </div>
         </label>
         <label className="field">
+          <span>Background color</span>
+          <div className="color-field-lg">
+            <div className="color-preview-lg" style={{ background: design.backgroundColor || '#ffffff' }} />
+            <input type="color" value={design.backgroundColor || '#ffffff'} onChange={(e) => set('backgroundColor', e.target.value)} className="color-picker-hidden" />
+            <input
+              className="color-hex-input"
+              value={design.backgroundColor || '#ffffff'}
+              onChange={(e) => set('backgroundColor', e.target.value)}
+            />
+          </div>
+        </label>
+        <label className="field">
           <span>Logo</span>
           {design.logoDataUrl ? (
             <div className="logo-preview">

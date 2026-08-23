@@ -95,7 +95,7 @@ async function fetchTopicNews(topicName, region = '', maxItems = 5) {
   return items;
 }
 
-async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 4096 }, retriesLeft = 2) {
+async function callGroqDirect({ model, system, user, temperature = 0.6, maxTokens = 4096 }, retriesLeft = 2) {
   const key = process.env.GROQ_API_KEY || '';
   if (!key) throw new Error('GROQ_API_KEY is not configured');
 
@@ -125,13 +125,72 @@ async function callGroq({ model, system, user, temperature = 0.6, maxTokens = 40
       const waitMatch = errText.match(/try again in ([\d.]+)s/i);
       const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1]) * 1000) + 250 : 4000;
       await sleep(waitMs);
-      return callGroq({ model, system, user, temperature, maxTokens }, retriesLeft - 1);
+      return callGroqDirect({ model, system, user, temperature, maxTokens }, retriesLeft - 1);
     }
-    throw new Error(`Groq API error ${response.status}: ${errText.slice(0, 300)}`);
+    const err = new Error(`Groq API error ${response.status}: ${errText.slice(0, 300)}`);
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();
   return data.choices?.[0]?.message?.content || '';
+}
+
+// ═══════════════════════════════════════════
+// GEMINI — fallback when Groq is unavailable
+// ═══════════════════════════════════════════
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-2.0-flash';
+
+async function callGeminiChat({ system, user, temperature = 0.6, maxTokens = 4096 }) {
+  const key = process.env.GEMINI_API_KEY || '';
+  if (!key) throw new Error('GEMINI_API_KEY is not configured');
+
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: user }] }],
+    generationConfig: { temperature, maxOutputTokens: maxTokens },
+  };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+
+  const response = await fetch(`${GEMINI_URL}/${GEMINI_CHAT_MODEL}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': key,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    const err = new Error(`Gemini API error ${response.status}: ${errText.slice(0, 300)}`);
+    err.status = response.status;
+    throw err;
+  }
+
+  const data = await response.json();
+  return data.candidates?.[0]?.content?.parts?.map((p) => p?.text || '').join('') || '';
+}
+
+// Compound models do their own web browsing inside Groq's infra — routing them
+// to Gemini would silently produce un-researched (hallucinated) answers, so
+// those failures surface instead of falling back.
+function canFallBackToGemini(model) {
+  return !resolveGroqModel(model).startsWith('groq/');
+}
+
+async function callGroq(opts, retriesLeft = 2) {
+  try {
+    return await callGroqDirect(opts, retriesLeft);
+  } catch (err) {
+    const transient =
+      err.status === 429 ||
+      (typeof err.status === 'number' && err.status >= 500) ||
+      /fetch failed|ECONNRESET|ETIMEDOUT|network/i.test(err.message);
+    if (!transient || !canFallBackToGemini(opts.model) || !process.env.GEMINI_API_KEY) throw err;
+    console.warn(`[becca] Groq unavailable (${String(err.message).slice(0, 120)}); falling back to ${GEMINI_CHAT_MODEL}`);
+    return callGeminiChat(opts);
+  }
 }
 
 // ═══════════════════════════════════════════

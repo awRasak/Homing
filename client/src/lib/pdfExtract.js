@@ -94,6 +94,7 @@ export async function renderAllPages(file) {
         fonts = detectFonts(textItems);
       }
       blocks = buildTextBlocks(canvas, textItems);
+      eraseTextBlocks(canvas, blocks);
     }
 
     pages.push({
@@ -661,6 +662,66 @@ function sampleBlockColors(canvas, x, y, w, h) {
 }
 
 /**
+ * Paint over each text block's bounding region on the canvas using the
+ * background color sampled from the block's edge pixels. This strips
+ * baked-in text from the rendered page image so the live preview's
+ * contenteditable overlays are the only visible text.
+ */
+function eraseTextBlocks(canvas, blocks) {
+  if (!blocks || blocks.length === 0) return;
+  const ctx = canvas.getContext('2d');
+
+  for (const block of blocks) {
+    const cx = Math.max(0, Math.floor(block.x));
+    const cy = Math.max(0, Math.floor(block.y));
+    const cw = Math.min(Math.ceil(block.width), canvas.width - cx);
+    const ch = Math.min(Math.ceil(block.height), canvas.height - cy);
+    if (cw <= 0 || ch <= 0) continue;
+
+    const edgeColor = sampleEdgeColor(canvas, cx, cy, cw, ch);
+    ctx.fillStyle = edgeColor;
+    ctx.fillRect(cx, cy, cw, ch);
+  }
+}
+
+/**
+ * Sample the most-common color along the 1-pixel border of a canvas
+ * rectangle. Edge pixels are almost always page background (text rarely
+ * touches the exact bounding-box edge).
+ */
+function sampleEdgeColor(canvas, x, y, w, h) {
+  const ctx = canvas.getContext('2d');
+  const { data } = ctx.getImageData(x, y, Math.max(1, Math.min(w, canvas.width - x)), Math.max(1, Math.min(h, canvas.height - y)));
+  const cw = Math.max(1, Math.min(w, canvas.width - x));
+
+  const counts = new Map();
+
+  function sample(px, py) {
+    const idx = (py * cw + px) * 4;
+    if (idx + 2 < data.length) {
+      const key = `${data[idx]},${data[idx + 1]},${data[idx + 2]}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+
+  const lastRow = Math.min(h - 1, data.length / (cw * 4) - 1);
+  for (let px = 0; px < cw; px++) {
+    sample(px, 0);
+    if (lastRow > 0) sample(px, lastRow);
+  }
+  const lastCol = cw - 1;
+  const rows = Math.min(h, Math.floor(data.length / (cw * 4)));
+  for (let py = 0; py < rows; py++) {
+    sample(0, py);
+    if (lastCol > 0) sample(lastCol, py);
+  }
+
+  if (counts.size === 0) return '#ffffff';
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
+  return rgbToHex(top[0], top[1], top[2]);
+}
+
+/**
  * Group text items (with canvas-pixel bounding boxes already attached by
  * renderSource) into line-level blocks positioned over the rendered page
  * image, for live in-place editing in the preview.
@@ -671,10 +732,10 @@ export function buildTextBlocks(canvas, textItems) {
   const sorted = [...textItems].sort((a, b) => a.canvasY - b.canvasY || a.canvasX - b.canvasX);
   const lines = [];
   let current = null;
-  const Y_TOLERANCE = 3;
   for (const item of sorted) {
     if (!item.str.trim()) continue;
-    if (current && Math.abs(current.top - item.canvasY) <= Y_TOLERANCE) {
+    const yTol = Math.max(3, (item.fontSize || 12) * 0.45);
+    if (current && Math.abs(current.top - item.canvasY) <= yTol) {
       current.str += item.str;
       current.left = Math.min(current.left, item.canvasX);
       current.right = Math.max(current.right, item.canvasX + item.canvasWidth);
@@ -711,8 +772,13 @@ export function buildTextBlocks(canvas, textItems) {
       const pad = l.maxSize * 0.15;
       const x = Math.max(0, l.left - pad);
       const y = Math.max(0, l.top - pad);
-      const width = l.right - l.left + pad * 2;
-      const height = l.bottom - l.top + pad * 2;
+      const measuredWidth = l.right - l.left + pad * 2;
+      const measuredHeight = l.bottom - l.top + pad * 2;
+      const estCharWidth = l.maxSize * 0.55;
+      const minWidth = l.str.trim().length * estCharWidth + pad * 2;
+      const minHeight = l.maxSize * 1.3;
+      const width = Math.max(measuredWidth, minWidth);
+      const height = Math.max(measuredHeight, minHeight);
       const { bg, fg } = sampleBlockColors(canvas, x, y, width, height);
       return {
         id: `block-${i}`,
