@@ -428,7 +428,7 @@ function PanelReminders({ reminders, onAddReminder, onDismissReminder }) {
         ) : (
           <div className="rp-list">
             {reminders.map(r => {
-              const dueAt = r.due ? new Date(r.due) : null;
+              const dueAt = r.due && !isNaN(new Date(r.due).getTime()) ? new Date(r.due) : null;
               const overdue = dueAt && dueAt.getTime() < now;
               return (
                 <div key={r.id} className={`rp-card ${overdue ? 'overdue' : ''}`}>
@@ -543,6 +543,16 @@ export default function BeccaLayout({
     document.body.style.userSelect = 'none';
   }
 
+  // Per-tab counts — a small badge so it's obvious when an action added
+  // something (a reminder from chat, a new topic, a fresh briefing…).
+  const tabCounts = {
+    chat: null,
+    watchlist: topics.filter(t => t.status !== 'paused').length,
+    briefings: briefings.length,
+    pipeline: null,
+    reminders: reminders.filter(r => !r.dismissed && !(r.fired && new Date(r.due) < new Date(Date.now() - 120_000))).length,
+  };
+
   return (
     <div className="becca-layout">
       {/* ── TabBar ── */}
@@ -553,6 +563,9 @@ export default function BeccaLayout({
             onClick={() => handleTabClick(tab.key)}>
             <img className="al-tab-icon" src={tab.icon} alt="" />
             <span className="al-tab-label">{tab.label}</span>
+            {tabCounts[tab.key] > 0 && (
+              <span className="al-tab-badge">{tabCounts[tab.key] > 9 ? '9+' : tabCounts[tab.key]}</span>
+            )}
           </button>
         ))}
       </div>

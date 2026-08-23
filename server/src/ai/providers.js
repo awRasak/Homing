@@ -117,7 +117,7 @@ async function generateGemini({ prompt, apiKey, model }) {
 async function generateGroq({ prompt, apiKey, model }) {
   const client = new Groq({ apiKey });
   const response = await client.chat.completions.create({
-    model: model || 'llama-3.3-70b-versatile',
+    model: model || 'meta-llama/llama-4-scout-17b-16e-instruct',
     messages: [
       {
         role: 'system',

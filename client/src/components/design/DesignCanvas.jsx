@@ -18,6 +18,8 @@ export default function DesignCanvas({ canvasJson, onCanvasReady, selectedObject
   const canvasRef = useRef(null);
   const fabricRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState('instagram-post');
+  const isPanning = useRef(false);
+  const lastPan = useRef({ x: 0, y: 0 });
 
   const dims = CANVAS_SIZES[canvasSize];
 
@@ -33,46 +35,91 @@ export default function DesignCanvas({ canvasJson, onCanvasReady, selectedObject
   useEffect(() => {
     if (!canvasRef.current || fabricRef.current) return;
 
-    const fc = new fabric.Canvas(canvasRef.current, {
-      width: dims.w,
-      height: dims.h,
-      backgroundColor: '#ffffff',
-      preserveObjectStacking: true,
-    });
+    try {
+      const fc = new fabric.Canvas(canvasRef.current, {
+        width: dims.w,
+        height: dims.h,
+        backgroundColor: '#ffffff',
+        preserveObjectStacking: true,
+      });
 
-    const scale = getScale();
-    fc.setZoom(scale);
-    fc.setWidth(dims.w * scale);
-    fc.setHeight(dims.h * scale);
+      const scale = getScale();
+      fc.setZoom(scale);
+      fc.setWidth(dims.w * scale);
+      fc.setHeight(dims.h * scale);
 
-    fabricRef.current = fc;
+      fabricRef.current = fc;
 
-    // Events
-    fc.on('selection:created', (e) => {
-      const obj = e.selected?.[0];
-      if (obj && onObjectSelected) onObjectSelected(serializeObject(obj));
-    });
-    fc.on('selection:updated', (e) => {
-      const obj = e.selected?.[0];
-      if (obj && onObjectSelected) onObjectSelected(serializeObject(obj));
-    });
-    fc.on('selection:cleared', () => {
-      if (onObjectSelected) onObjectSelected(null);
-    });
-    fc.on('object:modified', () => {
-      if (onLayersChanged) onLayersChanged();
-    });
-    fc.on('object:added', () => {
-      if (onLayersChanged) onLayersChanged();
-    });
-    fc.on('object:removed', () => {
-      if (onLayersChanged) onLayersChanged();
-    });
+      // Events
+      fc.on('selection:created', (e) => {
+        const obj = e.selected?.[0];
+        if (obj && onObjectSelected) onObjectSelected(serializeObject(obj));
+      });
+      fc.on('selection:updated', (e) => {
+        const obj = e.selected?.[0];
+        if (obj && onObjectSelected) onObjectSelected(serializeObject(obj));
+      });
+      fc.on('selection:cleared', () => {
+        if (onObjectSelected) onObjectSelected(null);
+      });
+      fc.on('object:modified', () => {
+        if (onLayersChanged) onLayersChanged();
+      });
+      fc.on('object:added', () => {
+        if (onLayersChanged) onLayersChanged();
+      });
+      fc.on('object:removed', () => {
+        if (onLayersChanged) onLayersChanged();
+      });
 
-    if (onCanvasReady) onCanvasReady(fc);
+      // Panning: mouse down on empty canvas area starts pan
+      fc.on('mouse:down', (opt) => {
+        if (opt.target || isPanning.current) return;
+        isPanning.current = true;
+        lastPan.current = { x: opt.e.clientX, y: opt.e.clientY };
+        fc.selection = false;
+        fc.setCursor('grabbing');
+      });
+
+      fc.on('mouse:move', (opt) => {
+        if (!isPanning.current) return;
+        const dx = opt.e.clientX - lastPan.current.x;
+        const dy = opt.e.clientY - lastPan.current.y;
+        lastPan.current = { x: opt.e.clientX, y: opt.e.clientY };
+        const vpt = fc.viewportTransform;
+        vpt[4] += dx;
+        vpt[5] += dy;
+        fc.requestRenderAll();
+      });
+
+      fc.on('mouse:up', () => {
+        if (isPanning.current) {
+          isPanning.current = false;
+          fc.selection = true;
+          fc.setCursor('default');
+        }
+      });
+
+      // Scroll-wheel zoom
+      fc.on('mouse:wheel', (opt) => {
+        const delta = opt.e.deltaY;
+        let zoom = fc.getZoom() * (delta > 0 ? 0.95 : 1.05);
+        zoom = Math.max(0.05, Math.min(zoom, 5));
+        const pointer = fc.getScenePoint(opt.e);
+        fc.zoomToPoint(pointer, zoom);
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+      });
+
+      if (onCanvasReady) onCanvasReady(fc);
+    } catch (err) {
+      console.error('[DesignCanvas] Init error:', err);
+    }
 
     return () => {
-      fc.dispose();
+      try {
+        fabricRef.current?.dispose();
+      } catch {}
       fabricRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

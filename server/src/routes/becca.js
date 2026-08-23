@@ -827,8 +827,76 @@ router.delete('/blog-drafts/:id', (req, res) => {
 });
 
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
 // REMINDERS
 // ═══════════════════════════════════════════
+// Convert natural language times ("in 10 seconds", "tomorrow at 3pm",
+// "friday at 9") into real ISO timestamps so reminders can actually fire.
+function parseWhenToIso(when) {
+  const s = String(when || '').trim().toLowerCase();
+  if (!s) return null;
+  // Already an ISO/parseable timestamp?
+  const direct = new Date(s);
+  if (!isNaN(direct.getTime()) && /\d{4}-\d{2}-\d{2}/.test(s)) return direct.toISOString();
+
+  const now = new Date();
+
+  // Relative: "in 10 seconds / 5 mins / 2 hours / 3 days / 1 week"
+  const rel = s.match(/\bin\s+(\d+(?:\.\d+)?)\s*(sec(?:ond)?s?|mins?|minutes?|hours?|hrs?|days?|weeks?)\b/);
+  if (rel) {
+    const n = parseFloat(rel[1]);
+    const unit = rel[2];
+    const ms = /^sec/.test(unit) ? 1000
+      : /^min/.test(unit) ? 60_000
+      : /^(hour|hr)/.test(unit) ? 3_600_000
+      : /^day/.test(unit) ? 86_400_000
+      : 604_800_000;
+    return new Date(now.getTime() + n * ms).toISOString();
+  }
+
+  // "tomorrow [at HH[:MM] [am/pm]]"
+  let base = new Date(now);
+  let dayShifted = false;
+  if (/\btomorrow\b/.test(s)) { base.setDate(base.getDate() + 1); dayShifted = true; }
+  else {
+    const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const dayMatch = s.match(/\b(?:on |next )?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+    if (dayMatch) {
+      const target = days.indexOf(dayMatch[1]);
+      let diff = (target - base.getDay() + 7) % 7;
+      if (diff === 0) diff = 7; // "on monday" said on a monday → next monday
+      if (/next /.test(dayMatch[0]) && diff < 7) diff += (diff <= 0 ? 7 : 0);
+      base.setDate(base.getDate() + diff);
+      dayShifted = true;
+    }
+  }
+
+  // Clock time: "at 3", "at 15:30", "3pm", "10:45am"
+  const t = s.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
+  if (t) {
+    let h = parseInt(t[1]);
+    const min = t[2] ? parseInt(t[2]) : 0;
+    const ap = t[3];
+    if (ap === 'pm' && h < 12) h += 12;
+    if (ap === 'am' && h === 12) h = 0;
+    if (!ap && h >= 1 && h <= 7 && min === 0 && !/\d{1,2}:\d{2}/.test(s)) {
+      // bare small hour without am/pm is ambiguous — assume afternoon if past
+      if (!dayShifted && h < now.getHours()) h += 12;
+    }
+    base.setHours(h, min, 0, 0);
+    if (!dayShifted && base.getTime() <= now.getTime()) {
+      base.setDate(base.getDate() + 1); // "at 3" later today has passed → tomorrow
+    }
+    return base.toISOString();
+  }
+
+  if (dayShifted) {
+    base.setHours(9, 0, 0, 0); // default morning slot for bare "tomorrow"
+    return base.toISOString();
+  }
+  return null;
+}
+
 router.get('/reminders', (req, res) => {
   const ws = req.workspace;
   const rows = db.prepare('SELECT * FROM becca_reminders WHERE workspace = ? ORDER BY created_at DESC').all(ws);
@@ -1151,7 +1219,7 @@ IMPORTANT: These phrases all mean ADD_TOPIC: "keep tabs on", "keep an eye on", "
 - REMOVE_TOPIC: { "name": "topic name" }
 IMPORTANT: These phrases all mean REMOVE_TOPIC: "stop tracking", "stop watching", "stop monitoring", "remove from watchlist", "unfollow", "I don't care about anymore", "take off my radar", "no more updates on". Actually emit the REMOVE_TOPIC JSON.
 - PIPELINE: { "topic": "topic name or short summary of the content to turn into a post", "tone": "optional tone" }
-- REMINDER: { "text": "reminder text", "when": "tomorrow at 3pm" }
+- REMINDER: { "text": "reminder text", "when": "absolute date+time resolved from the user's words as an ISO 8601 string (e.g. 'in 10 seconds' → 2026-08-22T18:30:10.000Z). ALWAYS resolve relative times using the current time.", "when_raw": "the user's original words, e.g. 'in 10 seconds'" }
 - MEMORY: { "content": "what to remember" }
 - CHAT: {} (no params needed)
 
@@ -1399,10 +1467,28 @@ async function executeAction(action, params, ws, model, region = '') {
       case 'REMINDER': {
         const text = (params.text || '').trim();
         if (!text) return 'No reminder text provided.';
+        const whenRaw = params.when_raw || params.when || '';
+
+        // Relative durations ("in 10 seconds") are computed LOCALLY — LLMs
+        // reliably botch clock arithmetic. Only trust the model's absolute
+        // timestamp if it lands in the future.
+        let due = null;
+        const raw = String(whenRaw);
+        if (/\bin\s+\d/.test(raw.toLowerCase())) {
+          due = parseWhenToIso(raw);
+        } else {
+          const modelIso = String(params.due || params.when || '');
+          if (/\d{4}-\d{2}-\d{2}/.test(modelIso)) {
+            const t = new Date(modelIso).getTime();
+            if (!isNaN(t) && t > Date.now() - 5000) due = new Date(t).toISOString();
+          }
+          if (!due) due = parseWhenToIso(raw);
+        }
+
         db.prepare('INSERT INTO becca_reminders (id, workspace, text, due, when_raw, fired, dismissed, created_at) VALUES (?,?,?,?,?,?,?,?)').run(
-          newId(), ws, text, params.when || null, params.when || '', 0, 0, nowIso()
+          newId(), ws, text, due, whenRaw, 0, 0, nowIso()
         );
-        return `Reminder set: "${text}"${params.when ? ' — ' + params.when : ''}`;
+        return `Reminder set: "${text}"${whenRaw ? ' — ' + whenRaw : ''}`;
       }
       case 'PIPELINE': {
         const topicName = (params.topic || '').trim();

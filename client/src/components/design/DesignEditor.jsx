@@ -13,6 +13,9 @@ export default function DesignEditor() {
   const [selectedObj, setSelectedObj] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [activePanel, setActivePanel] = useState('layers');
+  const [zoom, setZoom] = useState(1);
+  const [commandInput, setCommandInput] = useState('');
+  const [commandHistory, setCommandHistory] = useState([]);
 
   const dims = CANVAS_SIZES[canvasSize];
 
@@ -35,6 +38,7 @@ export default function DesignEditor() {
 
   const handleCanvasReady = useCallback((fc) => {
     fabricRef.current = fc;
+    setZoom(fc.getZoom());
   }, []);
 
   const handleObjectSelected = useCallback((obj) => {
@@ -230,13 +234,17 @@ export default function DesignEditor() {
   const handleZoomIn = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    fc.zoomTo(Math.min(fc.getZoom() * 1.2, 5));
+    const center = fc.getCenterPoint();
+    fc.zoomToPoint(center, Math.min(fc.getZoom() * 1.2, 5));
+    setZoom(fc.getZoom());
   }, []);
 
   const handleZoomOut = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    fc.zoomTo(Math.max(fc.getZoom() / 1.2, 0.05));
+    const center = fc.getCenterPoint();
+    fc.zoomToPoint(center, Math.max(fc.getZoom() / 1.2, 0.05));
+    setZoom(fc.getZoom());
   }, []);
 
   const handleZoomFit = useCallback(() => {
@@ -250,6 +258,7 @@ export default function DesignEditor() {
     fc.setWidth(dims.w * scale);
     fc.setHeight(dims.h * scale);
     fc.renderAll();
+    setZoom(scale);
   }, [dims]);
 
   const downloadFile = useCallback((data, filename) => {
@@ -315,6 +324,66 @@ export default function DesignEditor() {
     setCanvasSize(size);
   }, []);
 
+  function handleCommand(text) {
+    const fc = fabricRef.current;
+    if (!fc || !text.trim()) return;
+    const cmd = text.trim().toLowerCase();
+    setCommandHistory(prev => [...prev, { role: 'user', text }]);
+    const replies = [];
+
+    if (cmd === 'add text' || cmd === 'text') {
+      addText();
+      replies.push('Added a text element.');
+    } else if (cmd === 'add rectangle' || cmd === 'rect' || cmd === 'add rect') {
+      addRect();
+      replies.push('Added a rectangle.');
+    } else if (cmd === 'add circle' || cmd === 'circle') {
+      addCircle();
+      replies.push('Added a circle.');
+    } else if (cmd.startsWith('background ') || cmd.startsWith('bg ')) {
+      const color = cmd.replace(/^(background|bg)\s+/, '').trim();
+      fc.backgroundColor = color;
+      fc.renderAll();
+      replies.push(`Background set to ${color}.`);
+    } else if (cmd === 'clear') {
+      fc.clear();
+      fc.backgroundColor = '#ffffff';
+      fc.renderAll();
+      refreshLayers();
+      replies.push('Canvas cleared.');
+    } else if (cmd.startsWith('resize ')) {
+      const parts = cmd.replace('resize', '').trim().split(/x|\s/);
+      const w = parseInt(parts[0]);
+      const h = parseInt(parts[1]);
+      if (w > 0 && h > 0) {
+        const key = Object.keys(CANVAS_SIZES).find(k => CANVAS_SIZES[k].w === w && CANVAS_SIZES[k].h === h);
+        if (key) { setCanvasSize(key); replies.push(`Resized to ${w}×${h}.`); }
+        else replies.push(`No preset for ${w}×${h}. Available: ${Object.values(CANVAS_SIZES).map(v => `${v.w}×${v.h}`).join(', ')}.`);
+      } else {
+        replies.push('Usage: resize 1080x1080');
+      }
+    } else if (cmd === 'layers' || cmd === 'list') {
+      const objs = fc.getObjects();
+      if (objs.length === 0) replies.push('Canvas is empty.');
+      else objs.forEach((o, i) => replies.push(`${i + 1}. ${o.name || o.type}`));
+    } else if (cmd.startsWith('delete ') || cmd.startsWith('remove ')) {
+      const target = cmd.replace(/^(delete|remove)\s+/, '').trim();
+      const obj = fc.getObjects().find(o => (o.name || '').toLowerCase() === target || o.type === target);
+      if (obj) { fc.remove(obj); fc.renderAll(); replies.push(`Removed ${obj.name || obj.type}.`); }
+      else replies.push(`Couldn't find "${target}".`);
+    } else if (cmd === 'help') {
+      replies.push(
+        'Commands: add text, add rectangle, add circle, background [color],',
+        'resize [WxH], layers, delete [name], clear, help',
+      );
+    } else {
+      replies.push(`Unknown command: "${cmd}". Type "help" for available commands.`);
+    }
+
+    setCommandHistory(prev => [...prev, { role: 'assistant', text: replies.join('\n') }]);
+    setCommandInput('');
+  }
+
   return (
     <div className="design-editor">
       <DesignToolbar
@@ -343,6 +412,12 @@ export default function DesignEditor() {
             onObjectSelected={handleObjectSelected}
             onLayersChanged={refreshLayers}
           />
+          <div className="design-zoom-controls">
+            <button type="button" className="design-zoom-btn" onClick={handleZoomIn} title="Zoom in">+</button>
+            <span className="design-zoom-level">{Math.round(zoom * 100)}%</span>
+            <button type="button" className="design-zoom-btn" onClick={handleZoomOut} title="Zoom out">−</button>
+            <button type="button" className="design-zoom-btn" onClick={handleZoomFit} title="Fit to screen">⊞</button>
+          </div>
         </div>
         <div className="design-sidebar">
           <div className="design-sidebar-tabs">
@@ -356,6 +431,31 @@ export default function DesignEditor() {
             {activePanel === 'properties' && <ObjectPanel selectedObj={selectedObj} onUpdate={handleUpdateObject} />}
           </div>
         </div>
+      </div>
+      {commandHistory.length > 0 && (
+        <div className="design-chat-log">
+          {commandHistory.map((msg, i) => (
+            <div key={i} className={`design-chat-msg design-chat-${msg.role}`}>
+              {msg.text.split('\n').map((line, j) => <div key={j}>{line}</div>)}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="design-chat-bar">
+        <input
+          type="text"
+          className="design-chat-input"
+          value={commandInput}
+          onChange={e => setCommandInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCommand(commandInput); } }}
+          placeholder="Type a command — 'add text', 'background #ff0000', 'help'…"
+        />
+        <button
+          type="button"
+          className="design-chat-send"
+          onClick={() => handleCommand(commandInput)}
+          disabled={!commandInput.trim()}
+        >↑</button>
       </div>
     </div>
   );

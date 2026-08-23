@@ -494,9 +494,26 @@ export default function App() {
 
   async function handleExport() {
     if (!activeDesign || !currentProposal) return;
+    const slug = (currentProposal.companyName || 'proposal').replace(/[^a-zA-Z0-9]+/g, '_');
+
+    // Try server-side structural PDF export first (preserves real vector text)
+    try {
+      const blob = await api.downloadProposalPdf(currentProposal.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${slug}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+      return;
+    } catch {
+      // Fall through to client-side build
+    }
+
+    // Fallback: client-side raster-screenshot + text-overlay export
     try {
       const bytes = await buildProposalPdf(activeDesign, currentProposal);
-      const slug = (currentProposal.companyName || 'proposal').replace(/[^a-zA-Z0-9]+/g, '_');
       downloadPdfBytes(bytes, `${slug}.pdf`);
     } catch (err) {
       console.error('PDF export failed', err);
@@ -571,8 +588,8 @@ export default function App() {
       const profile = await api.becca.getProfile();
       setBeccaProfile(profile || null);
     } catch { /* keep whatever we have */ }
-    setTimeout(() => setSetupPhase('complete'), 1600);
-    setupTimer.current = setTimeout(finishCompanySetup, 3400);
+    setTimeout(() => setSetupPhase('complete'), 1200);
+    setupTimer.current = setTimeout(finishCompanySetup, 2600);
   }
 
   function finishCompanySetup() {
@@ -602,6 +619,56 @@ export default function App() {
     const now = new Date().toISOString();
     setBeccaReminders(prev => [{ id: result.id, text: data.text, due: data.due || null, when_raw: data.when_raw || '', fired: 0, dismissed: 0, created_at: now }, ...prev]);
   }
+
+  // ── Reminder firing ──
+  // Poll local reminder state; when one is due, pop the alert modal + play a
+  // chime, then mark it fired server-side so it never rings twice.
+  const [firedReminder, setFiredReminder] = useState(null);
+  const firedRef = useRef(new Set());
+
+  function playChime() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      [0, 0.28].forEach((offset, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = i === 0 ? 880 : 1174.66;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + offset + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + offset + 0.5);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(ctx.currentTime + offset);
+        osc.stop(ctx.currentTime + offset + 0.55);
+      });
+      setTimeout(() => ctx.close(), 1600);
+    } catch { /* audio blocked — modal still shows */ }
+  }
+
+  useEffect(() => {
+    if (!authUser) return;
+    const iv = setInterval(() => {
+      const now = Date.now();
+      for (const r of beccaReminders) {
+        if (r.fired || r.dismissed) continue;
+        if (!r.due) continue;
+        const due = new Date(r.due).getTime();
+        if (isNaN(due)) continue;
+        // ring anything up to 2 min overdue (missed while tab was closed)
+        if (due <= now && now - due < 120_000 && !firedRef.current.has(r.id)) {
+          firedRef.current.add(r.id);
+          setFiredReminder(r);
+          playChime();
+          api.becca.updateReminder(r.id, { fired: 1 }).catch(() => {});
+          setBeccaReminders(prev => prev.map(x => x.id === r.id ? { ...x, fired: 1 } : x));
+          break;
+        }
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [authUser, beccaReminders]);
 
   async function handleAuthSubmit(e) {
     e.preventDefault();
@@ -731,7 +798,7 @@ export default function App() {
             )}
             <input placeholder="Email" className="auth-input" type="text"
               value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
-            <input placeholder="Password" className="auth-input" type="text"
+            <input placeholder="Password" className="auth-input" type="password"
               value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
             {authHint && <div className="auth-hint">{authHint}</div>}
             {authError && <div className="auth-error">{authError}</div>}
@@ -856,13 +923,8 @@ export default function App() {
                   <div className="editor-canvas">
                     {activeDesign && importFile && (
                       <div className="app-preview-full">
-                        <div className="import-review-head">
-                          <span>Reviewing uploaded design — pick a color, crop the logo, then continue.</span>
-                          <button type="button" className="btn-primary" onClick={handleImportDone}>Done</button>
-                        </div>
                         <ImportPanel file={importFile} onExtracted={handleExtracted}
-                          onLogoExtracted={handleLogoExtracted} onAccentPicked={handleAccentPicked}
-                          designId={activeDesignId} />
+                          designId={activeDesignId} onComplete={handleImportDone} />
                       </div>
                     )}
                     {activeDesign && !importFile && (
@@ -872,13 +934,15 @@ export default function App() {
                             (() => {
                               const pages = activeDesign.pages || [];
                               const isMultiPage = pages.length > 1;
-                              const pageData = isMultiPage ? pages[currentPage - 1] : null;
-                              const displayDataUrl = pageData?.dataUrl || activeDesign.sourceImageDataUrl;
+                              // Clamp against stale indices after switching designs
+                              const safePage = Math.min(Math.max(1, currentPage), Math.max(1, pages.length));
+                              const pageData = isMultiPage ? pages[safePage - 1] : null;
+                              const displayDataUrl = pageData?.dataUrl || (isMultiPage ? null : activeDesign.sourceImageDataUrl);
                               const displayWidth = pageData?.width || activeDesign.sourceImageWidth;
                               const displayHeight = pageData?.height || activeDesign.sourceImageHeight;
                               const displayBlocks = pageData?.blocks || activeDesign.sourceTextBlocks || [];
                               const displayOverrides = isMultiPage
-                                ? ((activeDesign.pageOverrides || {})[String(currentPage)] || {})
+                                ? ((activeDesign.pageOverrides || {})[String(safePage)] || {})
                                 : (activeDesign.textOverrides || {});
 
                               return (
@@ -896,17 +960,17 @@ export default function App() {
                                       <button
                                         type="button"
                                         className="pagination-btn"
-                                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                                        disabled={currentPage <= 1}
+                                        onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
+                                        disabled={safePage <= 1}
                                       >
                                         ‹
                                       </button>
-                                      <span className="pagination-counter">{currentPage} / {pages.length}</span>
+                                      <span className="pagination-counter">{safePage} / {pages.length}</span>
                                       <button
                                         type="button"
                                         className="pagination-btn"
-                                        onClick={() => setCurrentPage((p) => Math.min(pages.length, p + 1))}
-                                        disabled={currentPage >= pages.length}
+                                        onClick={() => setCurrentPage(Math.min(pages.length, safePage + 1))}
+                                        disabled={safePage >= pages.length}
                                       >
                                         ›
                                       </button>
@@ -961,23 +1025,10 @@ export default function App() {
                         )}
                         {!currentProposal && activeDesign && !generating && (
                           <div className="empty-state no-print">
-                            <div className="empty-state-steps">
-                              <div className="empty-step">
-                                <span className="empty-step-num">1</span>
-                                <span className="empty-step-text">Fill in your details</span>
-                              </div>
-                              <div className="empty-step-arrow">→</div>
-                              <div className="empty-step">
-                                <span className="empty-step-num">2</span>
-                                <span className="empty-step-text">Enter a company name</span>
-                              </div>
-                              <div className="empty-step-arrow">→</div>
-                              <div className="empty-step">
-                                <span className="empty-step-num">3</span>
-                                <span className="empty-step-text">Generate</span>
-                              </div>
+                            <div className="empty-step-hint">
+                              Type the company you're pitching to below — Homin drafts a tailored proposal from your design.
                             </div>
-                            <button type="button" className="btn-primary" onClick={() => setEditOpen(true)}>Get started</button>
+                            <button type="button" className="btn-primary" onClick={() => setEditOpen(true)}>Edit your design</button>
                           </div>
                         )}
                         <div className="no-print">
@@ -988,6 +1039,7 @@ export default function App() {
                             providers={providers}
                             activeProvider={activeProvider}
                             onBatchClick={() => { setTab('batch'); setEditOpen(true); }}
+                            genError={genError}
                           />
                         </div>
                       </div>
@@ -1105,6 +1157,31 @@ export default function App() {
                 <div className="setup-celebrate-sub">Taking you to Homin…</div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {firedReminder && (
+        <div className="reminder-modal-overlay" onClick={() => setFiredReminder(null)}>
+          <div className="reminder-modal" onClick={e => e.stopPropagation()}>
+            <div className="reminder-modal-icon">⏰</div>
+            <div className="reminder-modal-title">Reminder</div>
+            <div className="reminder-modal-text">{firedReminder.text}</div>
+            {firedReminder.when_raw && (
+              <div className="reminder-modal-when">set for “{firedReminder.when_raw}”</div>
+            )}
+            <div className="reminder-modal-actions">
+              <button
+                className="btn-cancel"
+                onClick={() => {
+                  const snoozed = new Date(Date.now() + 5 * 60_000).toISOString();
+                  api.becca.updateReminder(firedReminder.id, { fired: 0 }).catch(() => {});
+                  setBeccaReminders(prev => prev.map(x => x.id === firedReminder.id ? { ...x, fired: 0, due: snoozed } : x));
+                  firedRef.current.delete(firedReminder.id);
+                  setFiredReminder(null);
+                }}>Snooze 5 min</button>
+              <button className="btn-save-profile" onClick={() => setFiredReminder(null)}>Done</button>
+            </div>
           </div>
         </div>
       )}

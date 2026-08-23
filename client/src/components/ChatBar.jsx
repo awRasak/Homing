@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export default function ChatBar({ onGenerate, generating, recentCompanies, providers, activeProvider, onBatchClick }) {
+export default function ChatBar({ onGenerate, generating, recentCompanies, providers, activeProvider, onBatchClick, genError }) {
   const [value, setValue] = useState('');
   const [provider, setProvider] = useState(activeProvider || '');
   const configuredProviders = Object.entries(providers || {}).filter(([, p]) => p.configured);
@@ -18,6 +18,7 @@ export default function ChatBar({ onGenerate, generating, recentCompanies, provi
 
   return (
     <div className="chat-bar-wrap">
+      {genError && <div className="chat-error">{genError}</div>}
       {recentCompanies.length > 0 && (
         <div className="chat-pills">
           {recentCompanies.slice(0, 4).map((name) => (

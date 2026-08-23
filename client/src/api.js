@@ -118,6 +118,13 @@ export const api = {
       body: jsonBody({ companyName, notes, provider, model }),
     }).then(handle),
 
+  downloadProposalPdf: (proposalId) =>
+    fetch(`${BASE}/proposals/${proposalId}/pdf`, { headers: authHeaders() })
+      .then((res) => {
+        if (!res.ok) throw new Error('PDF export failed');
+        return res.blob();
+      }),
+
   listRecipients: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return fetch(`${BASE}/recipients${qs ? '?' + qs : ''}`, { headers: authHeaders() }).then(handle);
