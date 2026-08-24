@@ -709,7 +709,7 @@ export default function App() {
     if (existing) return false;
     try {
       const result = await api.becca.addTopic({ name, context, platforms });
-      const newTopic = { id: result.id, name, context, priority: 'medium', platforms: JSON.stringify(platforms || ['google_news']) };
+      const newTopic = { id: result.id, name, context, priority: 'medium', platforms: JSON.stringify(platforms || ['google_news']), status: 'active', sort_order: beccaTopics.length, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       setBeccaTopics(prev => [...prev, newTopic]);
       return true;
     } catch { return false; }
