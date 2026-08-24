@@ -103,16 +103,32 @@ function PanelSessions({ workspace, activeSession, onSelectSession, onNewSession
 }
 
 /* ── Panel: Watchlist ── */
+const ALL_PLATFORMS = [
+  { id: 'google_news', label: 'News', icon: '📰' },
+  { id: 'youtube', label: 'YouTube', icon: '▶' },
+  { id: 'reddit', label: 'Reddit', icon: '◉' },
+  { id: 'twitter', label: 'X', icon: '𝕏' },
+  { id: 'tiktok', label: 'TikTok', icon: '♪' },
+  { id: 'instagram', label: 'Instagram', icon: '📷' },
+  { id: 'facebook', label: 'Facebook', icon: 'f' },
+  { id: 'snapchat', label: 'Snapchat', icon: '👻' },
+];
+
 function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, workspace, beccaModel, onRefresh, settings }) {
   const [newTopic, setNewTopic] = useState('');
   const [newContext, setNewContext] = useState('');
+  const [newPlatforms, setNewPlatforms] = useState(['google_news']);
   const [briefingTopic, setBriefingTopic] = useState(null);
+  const [scanningTopic, setScanningTopic] = useState(null);
+  const [topicStats, setTopicStats] = useState({});
+  const [expandedTopic, setExpandedTopic] = useState(null);
 
   function handleAdd() {
     if (!newTopic.trim()) return;
-    onAddTopic(newTopic.trim(), newContext.trim());
+    onAddTopic(newTopic.trim(), newContext.trim(), newPlatforms);
     setNewTopic('');
     setNewContext('');
+    setNewPlatforms(['google_news']);
   }
 
   function handleKeyDown(e) {
@@ -140,6 +156,31 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
     setBriefingTopic(null);
   }
 
+  async function handleScanTopic(topic) {
+    setScanningTopic(topic.id);
+    try {
+      const res = await api.social.scanTopic(topic.id);
+      setTopicStats(prev => ({ ...prev, [topic.id]: res }));
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error('Scan failed:', err);
+    }
+    setScanningTopic(null);
+  }
+
+  async function handleLoadStats(topicId) {
+    try {
+      const res = await api.social.getStats(topicId);
+      setTopicStats(prev => ({ ...prev, [topicId]: { ...prev[topicId], statsData: res } }));
+    } catch { /* ok */ }
+  }
+
+  function togglePlatform(platformId) {
+    setNewPlatforms(prev =>
+      prev.includes(platformId) ? prev.filter(p => p !== platformId) : [...prev, platformId]
+    );
+  }
+
   const activeTopics = topics.filter(t => t.status === 'active');
   const pausedTopics = topics.filter(t => t.status === 'paused');
 
@@ -163,6 +204,22 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
           onChange={e => setNewTopic(e.target.value)} onKeyDown={handleKeyDown} />
         <textarea className="cp-textarea" placeholder="Context (optional)" rows={2} value={newContext}
           onChange={e => setNewContext(e.target.value)} />
+
+        <div className="platform-picker">
+          <div className="cp-label" style={{ fontSize: '0.75rem', marginBottom: '0.3rem' }}>Platforms</div>
+          <div className="platform-chips">
+            {ALL_PLATFORMS.map(p => (
+              <button key={p.id}
+                className={`platform-chip ${newPlatforms.includes(p.id) ? 'platform-chip-active' : ''}`}
+                onClick={() => togglePlatform(p.id)}
+                title={p.label}>
+                <span className="platform-chip-icon">{p.icon}</span>
+                <span>{p.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button className="btn-add-topic" onClick={handleAdd} disabled={!newTopic.trim()}>+ Add to watchlist</button>
       </div>
 
@@ -170,31 +227,71 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
         <div className="cp-label">Active ({activeTopics.length})</div>
         <div className="wp-topics-list">
           {activeTopics.length === 0 && <div className="cp-empty">No topics tracked yet</div>}
-          {activeTopics.map(t => (
-            <div key={t.id} className="topic-row">
-              <span className={`topic-dot priority-${t.priority || 'medium'}`} />
-              <select className="topic-priority" value={t.priority || 'medium'}
-                onChange={e => onUpdateTopic(t.id, { priority: e.target.value })}>
-                <option value="high">High</option>
-                <option value="medium">Med</option>
-                <option value="low">Low</option>
-              </select>
-              <span className="topic-name">{t.name}</span>
-              {t.last_fetch_status === 'failed' && (
-                <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
-              )}
-              <label className="topic-toggle" title="Generate blog content">
-                <input type="checkbox" checked={!!t.blog_generation_enabled}
-                  onChange={() => handleToggleBlog(t.id)} />
-                <span className="topic-toggle-label">Blog</span>
-              </label>
-              <button className="topic-brief-btn" disabled={briefingTopic === t.id}
-                onClick={() => handleBriefNow(t)} title="Brief me now">
-                {briefingTopic === t.id ? '...' : '✦'}
-              </button>
-              <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
-            </div>
-          ))}
+          {activeTopics.map(t => {
+            const topicPlatforms = JSON.parse(t.platforms || '["google_news"]');
+            const stats = topicStats[t.id];
+            return (
+              <div key={t.id} className="topic-row topic-row-extended">
+                <div className="topic-row-top">
+                  <span className={`topic-dot priority-${t.priority || 'medium'}`} />
+                  <select className="topic-priority" value={t.priority || 'medium'}
+                    onChange={e => onUpdateTopic(t.id, { priority: e.target.value })}>
+                    <option value="high">High</option>
+                    <option value="medium">Med</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <span className="topic-name">{t.name}</span>
+                  {t.last_fetch_status === 'failed' && (
+                    <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
+                  )}
+                  <div className="topic-row-actions">
+                    <label className="topic-toggle" title="Generate blog content">
+                      <input type="checkbox" checked={!!t.blog_generation_enabled}
+                        onChange={() => handleToggleBlog(t.id)} />
+                      <span className="topic-toggle-label">Blog</span>
+                    </label>
+                    <button className="topic-scan-btn" disabled={scanningTopic === t.id}
+                      onClick={() => handleScanTopic(t)} title="Scan social platforms">
+                      {scanningTopic === t.id ? '...' : '◎'}
+                    </button>
+                    <button className="topic-brief-btn" disabled={briefingTopic === t.id}
+                      onClick={() => handleBriefNow(t)} title="Brief me now">
+                      {briefingTopic === t.id ? '...' : '✦'}
+                    </button>
+                    <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
+                  </div>
+                </div>
+                <div className="topic-platforms">
+                  {topicPlatforms.map(pid => {
+                    const p = ALL_PLATFORMS.find(x => x.id === pid);
+                    return p ? <span key={pid} className="topic-platform-badge" title={p.label}>{p.icon}</span> : null;
+                  })}
+                  {topicPlatforms.length > 1 && (
+                    <button className="topic-expand-btn" onClick={() => {
+                      const next = expandedTopic === t.id ? null : t.id;
+                      setExpandedTopic(next);
+                      if (next) handleLoadStats(t.id);
+                    }}>
+                      {expandedTopic === t.id ? '▾' : '▸'} {topicPlatforms.length} platforms
+                    </button>
+                  )}
+                </div>
+                {expandedTopic === t.id && stats?.statsData && (
+                  <div className="topic-stats-grid">
+                    {stats.statsData.platforms.map(ps => (
+                      <div key={ps.platform} className="topic-stat-card">
+                        <span className="topic-stat-platform">{ALL_PLATFORMS.find(p => p.id === ps.platform)?.icon || ps.platform}</span>
+                        <span className="topic-stat-count">{ps.total_mentions}</span>
+                        <span className={`topic-stat-sentiment sentiment-${ps.avg_sentiment > 0.1 ? 'pos' : ps.avg_sentiment < -0.1 ? 'neg' : 'neu'}`}>
+                          {ps.avg_sentiment > 0.1 ? '😊' : ps.avg_sentiment < -0.1 ? '😟' : '😐'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

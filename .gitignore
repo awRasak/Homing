@@ -6,6 +6,8 @@ dist-ssr/
 # server
 server/data/*.db
 server/data/*.db-*
+server/data/pdfs/
+server/data/backups/
 server/.env
 
 # client

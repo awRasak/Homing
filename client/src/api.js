@@ -395,4 +395,27 @@ export const api = {
         method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
       }).then(handle),
   },
+
+  social: {
+    getMentions: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return fetch(`${BASE}/social/mentions?${qs}`, { headers: authHeaders() }).then(handle);
+    },
+    scanTopic: (topicId) =>
+      fetch(`${BASE}/social/scan/${topicId}`, {
+        method: 'POST', headers: authHeaders(),
+      }).then(handle),
+    scanAll: () =>
+      fetch(`${BASE}/social/scan-all`, {
+        method: 'POST', headers: authHeaders(),
+      }).then(handle),
+    getTrends: (topicId, days = 14) =>
+      fetch(`${BASE}/social/trends/${topicId}?days=${days}`, { headers: authHeaders() }).then(handle),
+    getSpikes: (topicId) =>
+      fetch(`${BASE}/social/spikes/${topicId}`, { headers: authHeaders() }).then(handle),
+    getStats: (topicId) =>
+      fetch(`${BASE}/social/stats/${topicId}`, { headers: authHeaders() }).then(handle),
+    getStubs: () =>
+      fetch(`${BASE}/social/stubs`, { headers: authHeaders() }).then(handle),
+  },
 };

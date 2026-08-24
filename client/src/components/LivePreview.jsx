@@ -1,9 +1,23 @@
 import { useState, useEffect } from 'react';
 import { ensureGoogleFontLoaded } from '../lib/googleFonts';
 
-export default function LivePreview({ sourceImageDataUrl, sourceImageWidth, sourceImageHeight, sourceTextBlocks = [], textOverrides = {}, onOverride, headlineFont, bodyFont, backgroundColor = '#ffffff' }) {
+export default function LivePreview({
+  sourceImageDataUrl,
+  sourceImageWidth,
+  sourceImageHeight,
+  sourceTextBlocks = [],
+  extractedImages = [],
+  shapes = [],
+  textOverrides = {},
+  onOverride,
+  headlineFont,
+  bodyFont,
+  backgroundColor = '#ffffff',
+  nativeWidthPx,
+}) {
   const [focusedId, setFocusedId] = useState(null);
   const [imgError, setImgError] = useState(false);
+  const [selectedImageId, setSelectedImageId] = useState(null);
 
   useEffect(() => {
     setImgError(false);
@@ -22,33 +36,58 @@ export default function LivePreview({ sourceImageDataUrl, sourceImageWidth, sour
     }
   }
 
-  if (imgError || !sourceImageDataUrl) {
-    return (
-      <div id="proposal-preview" className="live-preview-wrap" style={{ background: backgroundColor }}>
-        <div className="live-preview-broken">
-          <div className="live-preview-broken-icon">⚠</div>
-          <div className="live-preview-broken-text">
-            Page image failed to load. Re-import this design to fix.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-      <div id="proposal-preview" className="live-preview-wrap" style={{ background: backgroundColor }}>
-      <img
-        src={sourceImageDataUrl}
-        alt="Uploaded design"
-        className="live-preview-img"
-        draggable={false}
-        onError={() => setImgError(true)}
-        onLoad={(e) => {
-          if (e.target.naturalWidth === 0 || e.target.naturalHeight === 0) {
-            setImgError(true);
-          }
-        }}
-      />
+    <div
+      id="proposal-preview"
+      className="live-preview-wrap"
+      style={{
+        background: backgroundColor,
+        aspectRatio: sourceImageWidth && sourceImageHeight
+          ? `${sourceImageWidth} / ${sourceImageHeight}`
+          : undefined,
+        width: nativeWidthPx ? `${nativeWidthPx}px` : undefined,
+        maxWidth: nativeWidthPx ? `${nativeWidthPx}px` : undefined,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget || e.target.classList.contains('live-preview-img')) {
+          setSelectedImageId(null);
+        }
+      }}
+    >
+      {sourceImageDataUrl && (
+        <img
+          src={sourceImageDataUrl}
+          alt="Uploaded design"
+          className="live-preview-img"
+          draggable={false}
+          onError={() => setImgError(true)}
+          onLoad={(e) => {
+            if (e.target.naturalWidth === 0 || e.target.naturalHeight === 0) {
+              setImgError(true);
+            }
+          }}
+        />
+      )}
+
+      {extractedImages.filter((img) => img.isBackground).map((img, i) => (
+        <img
+          key={`bg-img-${i}`}
+          src={img.dataUrl}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            left: `${(img.x / sourceImageWidth) * 100}%`,
+            top: `${(img.y / sourceImageHeight) * 100}%`,
+            width: `${(img.width / sourceImageWidth) * 100}%`,
+            height: `${(img.height / sourceImageHeight) * 100}%`,
+            objectFit: 'cover',
+            opacity: img.opacity || 0.08,
+            pointerEvents: 'none',
+          }}
+        />
+      ))}
+
       {sourceTextBlocks.map((block) => {
         const overridden = Object.prototype.hasOwnProperty.call(textOverrides, block.id);
         const text = overridden ? textOverrides[block.id] : block.text;
@@ -77,7 +116,7 @@ export default function LivePreview({ sourceImageDataUrl, sourceImageWidth, sour
               fontFamily,
               fontWeight: isTitle ? 700 : 400,
               color: block.fg || '#000',
-              background: isFocused ? (block.bg || 'rgba(255,255,255,0.85)') : 'transparent',
+              background: block.bg || backgroundColor || '#ffffff',
               lineHeight: 1.15,
             }}
             contentEditable

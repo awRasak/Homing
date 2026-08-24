@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export default function ChatBar({ onGenerate, generating, recentCompanies, providers, activeProvider, onBatchClick, genError }) {
+export default function ChatBar({ onGenerate, generating, recentCompanies, providers, activeProvider, genError }) {
   const [value, setValue] = useState('');
   const [provider, setProvider] = useState(activeProvider || '');
   const configuredProviders = Object.entries(providers || {}).filter(([, p]) => p.configured);
@@ -38,11 +38,6 @@ export default function ChatBar({ onGenerate, generating, recentCompanies, provi
           placeholder="Enter the company you're pitching to…"
           disabled={generating}
         />
-        {onBatchClick && (
-          <button type="button" className="chat-pill" disabled={generating} onClick={onBatchClick}>
-            Batch
-          </button>
-        )}
         <button type="submit" className="input-send" disabled={generating || !value.trim()}>
           {generating ? '…' : '→'}
         </button>

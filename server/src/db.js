@@ -68,6 +68,8 @@ try {
     ["page_overrides", "TEXT NOT NULL DEFAULT '{}'"],
     ["source_pdf_path", "TEXT"],
     ["background_color", "TEXT NOT NULL DEFAULT '#ffffff'"],
+    ["brand_colors", "TEXT NOT NULL DEFAULT '[]'"],
+    ["logo_variations", "TEXT NOT NULL DEFAULT '[]'"],
   ];
   for (const [name, def] of newColumns) {
     if (!existingColumns.has(name)) {
@@ -386,6 +388,53 @@ try {
   }
 } catch (e) {
   console.warn('[DB] Skipping campaign_recipients migration:', e.message);
+}
+
+// ── Social Listening tables ──
+db.exec(`
+CREATE TABLE IF NOT EXISTS social_mentions (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL DEFAULT 'default',
+  topic_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  snippet TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  author TEXT NOT NULL DEFAULT '',
+  author_url TEXT NOT NULL DEFAULT '',
+  published_at TEXT,
+  fetched_at TEXT NOT NULL,
+  sentiment TEXT DEFAULT NULL,
+  sentiment_score REAL DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_social_mentions_workspace ON social_mentions(workspace);
+CREATE INDEX IF NOT EXISTS idx_social_mentions_topic ON social_mentions(topic_id);
+CREATE INDEX IF NOT EXISTS idx_social_mentions_platform ON social_mentions(platform);
+CREATE INDEX IF NOT EXISTS idx_social_mentions_fetched ON social_mentions(fetched_at);
+`);
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS social_trends (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL DEFAULT 'default',
+  topic_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  date TEXT NOT NULL,
+  mention_count INTEGER NOT NULL DEFAULT 0,
+  sentiment_avg REAL DEFAULT NULL,
+  UNIQUE(workspace, topic_id, platform, date)
+);
+CREATE INDEX IF NOT EXISTS idx_social_trends_topic ON social_trends(topic_id);
+`);
+
+// Add platforms column to becca_topics
+try {
+  const cols = new Set(db.prepare('PRAGMA table_info(becca_topics)').all().map((c) => c.name));
+  if (!cols.has('platforms')) {
+    db.exec(`ALTER TABLE becca_topics ADD COLUMN platforms TEXT NOT NULL DEFAULT '["google_news"]'`);
+  }
+} catch (e) {
+  console.warn('[DB] Skipping becca_topics platforms migration:', e.message);
 }
 
 export function nowIso() {

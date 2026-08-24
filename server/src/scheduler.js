@@ -1,4 +1,5 @@
 import { db, nowIso, newId } from './db.js';
+import { scanTopic } from './services/socialListening.js';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
@@ -247,3 +248,36 @@ export function startScheduler() {
 
 // Export for manual triggering via API
 export { runBriefingForWorkspace };
+
+// ── Social listening scan (runs every 30 min) ──
+let socialRunning = false;
+async function socialTick() {
+  if (socialRunning) return;
+  socialRunning = true;
+  try {
+    const topics = db.prepare("SELECT * FROM becca_topics WHERE status = 'active' AND platforms != '[]'").all();
+    for (const topic of topics) {
+      try {
+        const result = await scanTopic(topic);
+        if (result.saved > 0) {
+          console.log(`[Social] Scanned "${topic.name}": ${result.fetched} fetched, ${result.saved} saved`);
+        }
+        if (result.spikes?.length) {
+          console.log(`[Social] Spikes detected for "${topic.name}":`, result.spikes);
+        }
+      } catch (err) {
+        console.error(`[Social] Error scanning "${topic.name}":`, err.message);
+      }
+      // Rate-limit between topics
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  } finally {
+    socialRunning = false;
+  }
+}
+
+export function startSocialScheduler() {
+  console.log('[Social Scheduler] Started — scanning every 30 minutes');
+  setInterval(socialTick, 30 * 60_000);
+  setTimeout(socialTick, 15_000); // first scan 15s after boot
+}

@@ -758,9 +758,10 @@ router.post('/topics', (req, res) => {
 
   const id = newId();
   const now = nowIso();
+  const platforms = req.body.platforms ? JSON.stringify(req.body.platforms) : '["google_news"]';
   const maxOrder = db.prepare('SELECT MAX(sort_order) as mx FROM becca_topics WHERE workspace = ?').get(ws);
-  db.prepare('INSERT INTO becca_topics (id, workspace, name, normalized_topic, context, priority, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)').run(
-    id, ws, name, name.toLowerCase().trim(), req.body.context || '', req.body.priority || 'medium', (maxOrder?.mx || 0) + 1, now, now
+  db.prepare('INSERT INTO becca_topics (id, workspace, name, normalized_topic, context, priority, platforms, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(
+    id, ws, name, name.toLowerCase().trim(), req.body.context || '', req.body.priority || 'medium', platforms, (maxOrder?.mx || 0) + 1, now, now
   );
   res.json({ id, ok: true });
 });
@@ -773,6 +774,7 @@ router.put('/topics/:id', (req, res) => {
   if (req.body.name !== undefined) { sets.push('name = ?'); vals.push(req.body.name); }
   if (req.body.context !== undefined) { sets.push('context = ?'); vals.push(req.body.context); }
   if (req.body.priority !== undefined) { sets.push('priority = ?'); vals.push(req.body.priority); }
+  if (req.body.platforms !== undefined) { sets.push('platforms = ?'); vals.push(JSON.stringify(req.body.platforms)); }
   if (req.body.sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(req.body.sort_order); }
   if (sets.length === 0) return res.json({ ok: true });
   sets.push('updated_at = ?'); vals.push(now);

@@ -83,18 +83,24 @@ export async function renderAllPages(file) {
     await page.render({ canvasContext: ctx, viewport }).promise;
 
     const textItems = await extractTextItems(page, viewport);
-    const images = await extractPageImages(page, viewport);
+    const { images, shapes, bgColor } = await extractPageContent(page, viewport);
 
     let content = null;
     let fonts = null;
+    let designData = null;
     let blocks = [];
     if (textItems?.length) {
       content = extractContent(textItems);
       if (i === 1) {
         fonts = detectFonts(textItems);
+        designData = extractDesignData(shapes, images, textItems, bgColor);
       }
       blocks = buildTextBlocks(canvas, textItems);
-      eraseTextBlocks(canvas, blocks);
+      eraseTextItems(canvas, textItems);
+      // Erase background images from the canvas — they'll be re-rendered as
+      // divs with reduced opacity so they sit quietly behind the content.
+      const bgs = images.filter((img) => img.isBackground);
+      if (bgs.length) eraseBackgroundImages(canvas, bgs);
     }
 
     pages.push({
@@ -102,53 +108,78 @@ export async function renderAllPages(file) {
       textItems,
       blocks,
       images,
+      shapes,
+      bgColor,
       content: i === 1 ? content : null,
       fonts: i === 1 ? fonts : null,
+      designData: i === 1 ? designData : null,
       pageNum: i,
       totalPages,
       dataUrl: canvas.toDataURL('image/png'),
       width: canvas.width,
       height: canvas.height,
     });
+
+    // Yield a frame between pages so spinners/step UI keep animating
+    // instead of freezing while the main thread renders the next page.
+    await new Promise((r) => setTimeout(r, 16));
   }
 
   return pages;
 }
 
+function rgbaToHex(r, g, b) {
+  return '#' + [r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('');
+}
+
+function parsePdfColor(args) {
+  if (!args || args.length < 3) return null;
+  const r = Math.round(Math.min(1, Math.max(0, args[0])) * 255);
+  const g = Math.round(Math.min(1, Math.max(0, args[1])) * 255);
+  const b = Math.round(Math.min(1, Math.max(0, args[2])) * 255);
+  return rgbaToHex(r, g, b);
+}
+
 /**
- * Extract embedded raster images (logos, photos, graphics) from a PDF page
- * using the page's operator list. Returns array of { dataUrl, x, y, width,
- * height } positioned in canvas-pixel space (scale 1.75 render), or [].
+ * Extract embedded raster images (logos, photos, graphics) AND vector shapes
+ * (filled/stroked rectangles) from a PDF page using the operator list.
+ * Returns { images, shapes } positioned in canvas-pixel space (scale 1.75).
  */
-export async function extractPageImages(page, viewport) {
+export async function extractPageContent(page, viewport) {
+  const images = [];
+  const shapes = [];
   try {
     const ops = await page.getOperatorList();
-    const images = [];
     const processed = new Set();
 
-    // Page bounds in PDF user space (scale 1 viewport).
     const pageVp = page.getViewport({ scale: 1 });
     const pageRect = [0, 0, pageVp.width, pageVp.height];
 
-    // Track the current transform matrix using a real canvas context so the
-    // semantics match the renderer exactly. pdf.js reports
-    // paintImageXObject args as [name, width, height]; the destination is
-    // derived by applying the CTM in effect at the paint op.
     const tracker = document.createElement('canvas').getContext('2d');
     const ctmStack = [];
     const clipStack = [pageRect.slice()];
     let pendingClip = false;
+
+    let fillColor = null;
+    let strokeColor = null;
+    let lineWidth = 1;
+    let currentPathOps = [];
+    let currentPathCoords = [];
+    let pathMatrix = null;
 
     const readCtm = () => {
       const t = tracker.getTransform();
       return [t.a, t.b, t.c, t.d, t.e, t.f];
     };
 
+    const mapPoint = (ctm, x, y) => [
+      ctm[0] * x + ctm[2] * y + ctm[4],
+      ctm[1] * x + ctm[3] * y + ctm[5],
+    ];
+
     const mapRect = (ctm, [rx, ry, rw, rh]) => {
-      const x0 = ctm[0] * rx + ctm[2] * ry + ctm[4];
-      const y0 = ctm[1] * rx + ctm[3] * ry + ctm[5];
-      const x1 = ctm[0] * (rx + rw) + ctm[2] * (ry + rh) + ctm[4];
-      const y1 = ctm[1] * (rx + rw) + ctm[3] * (ry + rh) + ctm[5];
+      const [x0, y0] = mapPoint(ctm, rx, ry);
+      const [x1, y1] = mapPoint(ctm, rx + rw, ry + rh);
       return [Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)];
     };
 
@@ -167,12 +198,57 @@ export async function extractPageImages(page, viewport) {
       return acc || [0, 0, 0, 0];
     };
 
+    const viewportConvert = (x, y) => viewport.convertToViewportPoint(x, y);
+
+    const flushPathAsShape = (isFill, isStroke) => {
+      if (currentPathOps.length === 0) return;
+      const ctm = pathMatrix || readCtm();
+
+      for (let i = 0; i < currentPathOps.length; i++) {
+        const op = currentPathOps[i];
+        if (op === 3) {
+          const coords = currentPathCoords[i];
+          if (!coords || coords.length < 4) continue;
+          const [rx, ry, rw, rh] = coords;
+          const [x0, y0] = mapPoint(ctm, rx, ry);
+          const [x1, y1] = mapPoint(ctm, rx + rw, ry + rh);
+          const sx = Math.min(x0, x1);
+          const sy = Math.min(y0, y1);
+          const sw = Math.abs(x1 - x0);
+          const sh = Math.abs(y1 - y0);
+          if (sw < 2 || sh < 2) continue;
+
+          const clipped = intersectRect([sx, sy, sw, sh], currentClip());
+          const [cx, cy, cw, ch] = clipped || [sx, sy, sw, sh];
+          if (cw < 2 || ch < 2) continue;
+
+          const [vp1x, vp1y] = viewportConvert(cx, cy);
+          const [vp2x, vp2y] = viewportConvert(cx + cw, cy + ch);
+          const canvasX = Math.min(vp1x, vp2x);
+          const canvasY = Math.min(vp1y, vp2y);
+          const canvasW = Math.abs(vp2x - vp1x);
+          const canvasH = Math.abs(vp2y - vp1y);
+
+          shapes.push({
+            type: 'rect',
+            x: canvasX,
+            y: canvasY,
+            width: canvasW,
+            height: canvasH,
+            fill: isFill ? fillColor : null,
+            stroke: isStroke ? strokeColor : null,
+            strokeWidth: isStroke ? lineWidth * viewport.scale : 0,
+          });
+        }
+      }
+    };
+
     for (let i = 0; i < ops.fnArray.length; i++) {
       const fn = ops.fnArray[i];
       const args = ops.argsArray[i] || [];
 
       if (fn === pdfjsLib.OPS.save || fn === pdfjsLib.OPS.beginGroup || fn === pdfjsLib.OPS.paintFormXObjectBegin) {
-        ctmStack.push(readCtm());
+        ctmStack.push({ ctm: readCtm(), fill: fillColor, stroke: strokeColor, lineW: lineWidth });
         tracker.save();
         clipStack.push(clipStack[clipStack.length - 1].slice());
         if (fn === pdfjsLib.OPS.beginGroup || fn === pdfjsLib.OPS.paintFormXObjectBegin) {
@@ -184,8 +260,16 @@ export async function extractPageImages(page, viewport) {
       }
       if (fn === pdfjsLib.OPS.restore || fn === pdfjsLib.OPS.endGroup || fn === pdfjsLib.OPS.paintFormXObjectEnd) {
         tracker.restore();
+        const saved = ctmStack.pop();
+        if (saved) {
+          fillColor = saved.fill;
+          strokeColor = saved.stroke;
+          lineWidth = saved.lineW;
+        }
         if (clipStack.length > 1) clipStack.pop();
         pendingClip = false;
+        currentPathOps = [];
+        currentPathCoords = [];
         continue;
       }
       if (fn === pdfjsLib.OPS.transform) {
@@ -204,8 +288,82 @@ export async function extractPageImages(page, viewport) {
           const top = clipStack[clipStack.length - 1];
           clipStack[clipStack.length - 1] = intersectRect(top, clip) || [0, 0, 0, 0];
         }
+      }
+
+      if (fn === pdfjsLib.OPS.constructPath) {
+        const subPaths = args[0];
+        const pathArgs = args[1];
+        const matrix = args[2];
+        pathMatrix = matrix ? [...matrix] : null;
+        let coordIdx = 0;
+        for (const op of subPaths) {
+          if (op === 0) {
+            currentPathOps.push(0);
+            currentPathCoords.push([pathArgs[coordIdx], pathArgs[coordIdx + 1]]);
+            coordIdx += 2;
+          } else if (op === 1) {
+            currentPathOps.push(1);
+            currentPathCoords.push([pathArgs[coordIdx], pathArgs[coordIdx + 1]]);
+            coordIdx += 2;
+          } else if (op === 3) {
+            currentPathOps.push(3);
+            currentPathCoords.push([
+              pathArgs[coordIdx], pathArgs[coordIdx + 1],
+              pathArgs[coordIdx + 2], pathArgs[coordIdx + 3],
+            ]);
+            coordIdx += 4;
+          } else if (op === 4) {
+            currentPathOps.push(4);
+            currentPathCoords.push([]);
+          }
+        }
         continue;
       }
+
+      if (fn === pdfjsLib.OPS.setFillColor && args.length >= 3) {
+        fillColor = parsePdfColor(args);
+        continue;
+      }
+      if (fn === pdfjsLib.OPS.setFillColorSpace) {
+        continue;
+      }
+      if (fn === pdfjsLib.OPS.setStrokeColor && args.length >= 3) {
+        strokeColor = parsePdfColor(args);
+        continue;
+      }
+      if (fn === pdfjsLib.OPS.setLineWidth) {
+        lineWidth = args[0] || 1;
+        continue;
+      }
+
+      if (fn === pdfjsLib.OPS.fill || fn === pdfjsLib.OPS.eoFill) {
+        flushPathAsShape(true, false);
+        currentPathOps = [];
+        currentPathCoords = [];
+        pathMatrix = null;
+        continue;
+      }
+      if (fn === pdfjsLib.OPS.stroke || fn === pdfjsLib.OPS.closeStroke) {
+        flushPathAsShape(false, true);
+        currentPathOps = [];
+        currentPathCoords = [];
+        pathMatrix = null;
+        continue;
+      }
+      if (fn === pdfjsLib.OPS.fillStroke || fn === pdfjsLib.OPS.eoFillStroke || fn === pdfjsLib.OPS.closeFillStroke) {
+        flushPathAsShape(true, true);
+        currentPathOps = [];
+        currentPathCoords = [];
+        pathMatrix = null;
+        continue;
+      }
+      if (fn === pdfjsLib.OPS.endPath) {
+        currentPathOps = [];
+        currentPathCoords = [];
+        pathMatrix = null;
+        continue;
+      }
+
       if (fn !== pdfjsLib.OPS.paintImageXObject) continue;
       const name = args[0];
       if (!name || processed.has(name)) continue;
@@ -222,36 +380,24 @@ export async function extractPageImages(page, viewport) {
       const iw = obj.width;
       const ih = obj.height;
       if (!iw || !ih) continue;
-      const drawable = obj.bitmap || obj;
 
       const ctm = readCtm();
-      const mapPoint = (x, y) => [
-        ctm[0] * x + ctm[2] * y + ctm[4],
-        ctm[1] * x + ctm[3] * y + ctm[5],
-      ];
-
-      // Destination rectangle in PDF user space from the CTM, then intersect
-      // with the current clip so only the visible region is reported (many
-      // PDFs paint images at huge scale and clip them to a small area).
-      const [p1x, p1y] = mapPoint(0, 0);
-      const [p2x, p2y] = mapPoint(iw, ih);
+      const [p1x, p1y] = mapPoint(ctm, 0, 0);
+      const [p2x, p2y] = mapPoint(ctm, iw, ih);
       let x = Math.min(p1x, p2x);
       let y = Math.min(p1y, p2y);
       let w = Math.abs(p2x - p1x);
       let h = Math.abs(p2y - p1y);
       const clipped = intersectRect([x, y, w, h], currentClip());
-      if (clipped) {
-        [x, y, w, h] = clipped;
-      }
-
+      if (clipped) [x, y, w, h] = clipped;
       if (w <= 4 || h <= 4) continue;
 
-      const p1 = viewport.convertToViewportPoint(x, y);
-      const p2 = viewport.convertToViewportPoint(x + w, y + h);
-      const canvasX = Math.min(p1[0], p2[0]);
-      const canvasY = Math.min(p1[1], p2[1]);
-      const cw = Math.abs(p2[0] - p1[0]);
-      const ch = Math.abs(p2[1] - p1[1]);
+      const [vp1x, vp1y] = viewportConvert(x, y);
+      const [vp2x, vp2y] = viewportConvert(x + w, y + h);
+      const canvasX = Math.min(vp1x, vp2x);
+      const canvasY = Math.min(vp1y, vp2y);
+      const cw = Math.abs(vp2x - vp1x);
+      const ch = Math.abs(vp2y - vp1y);
       if (cw <= 6 || ch <= 6) continue;
 
       let dataUrl = null;
@@ -259,8 +405,19 @@ export async function extractPageImages(page, viewport) {
         const imgCanvas = document.createElement('canvas');
         imgCanvas.width = iw;
         imgCanvas.height = ih;
-        imgCanvas.getContext('2d').drawImage(drawable, 0, 0);
-        dataUrl = imgCanvas.toDataURL('image/png');
+        const imgCtx = imgCanvas.getContext('2d');
+        let drawable = obj.bitmap;
+        if (drawable && typeof drawable.close === 'function') {
+          try { drawable = await createImageBitmap(drawable); } catch { drawable = null; }
+        }
+        if (!drawable && obj.data) {
+          const imgData = new ImageData(new Uint8ClampedArray(obj.data), iw, ih);
+          imgCtx.putImageData(imgData, 0, 0);
+          dataUrl = imgCanvas.toDataURL('image/png');
+        } else if (drawable) {
+          imgCtx.drawImage(drawable, 0, 0);
+          dataUrl = imgCanvas.toDataURL('image/png');
+        }
       } catch {}
 
       images.push({
@@ -274,21 +431,79 @@ export async function extractPageImages(page, viewport) {
       });
     }
 
-    // Deduplicate overlapping crops.
-    return images.filter((img, i) => {
+    const deduped = images.filter((img, i) => {
       for (let j = 0; j < i; j++) {
-        const a = img;
         const b = images[j];
-        const overlapX = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-        const overlapY = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-        if (overlapX / Math.min(a.width, b.width) > 0.8 && overlapY / Math.min(a.height, b.height) > 0.8) {
+        if (!img.dataUrl || !b.dataUrl) continue;
+        const overlapX = Math.max(0, Math.min(img.x + img.width, b.x + b.width) - Math.max(img.x, b.x));
+        const overlapY = Math.max(0, Math.min(img.y + img.height, b.y + b.height) - Math.max(img.y, b.y));
+        if (overlapX / Math.min(img.width, b.width) > 0.8 && overlapY / Math.min(img.height, b.height) > 0.8) {
           return false;
         }
       }
       return true;
     });
+
+    const pageW = viewport.width;
+    const pageH = viewport.height;
+    const pageArea = pageW * pageH;
+
+    // Classify images: large images covering >25% of the page are background
+    // and should be rendered at reduced opacity.
+    for (const img of deduped) {
+      const coverage = (img.width * img.height) / pageArea;
+      img.isBackground = coverage > 0.25;
+      img.opacity = img.isBackground ? 0.08 : 1;
+    }
+    const minArea = pageArea * 0.0005;
+
+    // Deduplicate: merge shapes at nearly identical positions, keeping the
+    // last (topmost) fill color.
+    const shapeDeduped = [];
+    for (const s of shapes) {
+      // Keep thin accent bars (min 2px in either dimension) but skip tiny noise.
+      // A shape must have at least one dimension ≥ 10px OR the other ≥ 2px with
+      // enough area to be structural (accent bars are often ~100×3px).
+      if (s.width < 2 || s.height < 2) continue;
+      if (s.width < 10 && s.height < 10) continue;
+      if (s.width * s.height < minArea) continue;
+      if (!s.fill && !s.stroke) continue;
+
+      let merged = false;
+      for (const existing of shapeDeduped) {
+        const dx = Math.abs(s.x - existing.x);
+        const dy = Math.abs(s.y - existing.y);
+        const dw = Math.abs(s.width - existing.width);
+        const dh = Math.abs(s.height - existing.height);
+        if (dx < 2 && dy < 2 && dw < 2 && dh < 2) {
+          if (s.fill) existing.fill = s.fill;
+          if (s.stroke) {
+            existing.stroke = s.stroke;
+            existing.strokeWidth = s.strokeWidth;
+          }
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) shapeDeduped.push(s);
+    }
+
+    // Separate full-page background fills from structural shapes.
+    // Full-page fills (≥95% coverage) set the page background color.
+    let bgColor = null;
+    const structuralShapes = [];
+    for (const s of shapeDeduped) {
+      const coverage = (s.width * s.height) / pageArea;
+      if (coverage >= 0.95 && s.fill) {
+        bgColor = s.fill;
+      } else {
+        structuralShapes.push(s);
+      }
+    }
+
+    return { images: deduped, shapes: structuralShapes, bgColor };
   } catch {
-    return [];
+    return { images: [], shapes: [], bgColor: null };
   }
 }
 
@@ -315,16 +530,26 @@ async function extractTextItems(page, viewport) {
   });
 
   const fontNameCache = {};
+  const fontInfoCache = {};
   for (const key of new Set(textItems.map((t) => t.fontName))) {
     try {
       const fontObj = page.commonObjs.get(key);
-      fontNameCache[key] = fontObj?.name || key;
+      const rawName = fontObj?.name || key;
+      fontNameCache[key] = rawName;
+
+      // Detect Type3 fonts by their generated names (e.g. "g_d0_f1").
+      // These are fonts where each glyph is a vector drawing program —
+      // they duplicate text content and cause stray marks if rendered as shapes.
+      const isType3 = /^g_d\d+_f\d+$/.test(rawName) || /^ ([A-Z]\d+)$/.test(rawName);
+      fontInfoCache[key] = { name: rawName, isType3 };
     } catch {
       fontNameCache[key] = key;
+      fontInfoCache[key] = { name: key, isType3: false };
     }
   }
   textItems.forEach((t) => {
     t.fontName = fontNameCache[t.fontName] || t.fontName;
+    t.isType3 = fontInfoCache[t.fontName]?.isType3 || false;
   });
 
   return textItems;
@@ -493,24 +718,37 @@ export function cropCanvasRegion(sourceCanvas, x, y, w, h) {
 export function detectFonts(textItems) {
   if (!textItems || textItems.length === 0) return null;
 
+  // Skip Type3 font items — they're glyph duplicates, not real text.
+  const realItems = textItems.filter((t) => !t.isType3 && t.str.trim());
+
   const sizeCounts = new Map();
-  for (const item of textItems) {
-    if (!item.str.trim()) continue;
+  for (const item of realItems) {
     const size = Math.round(item.fontSize);
     sizeCounts.set(size, (sizeCounts.get(size) || 0) + item.str.length);
   }
 
+  if (sizeCounts.size === 0) return null;
+
   const maxSize = Math.max(...sizeCounts.keys());
-  const headlineItem = textItems.find((t) => Math.round(t.fontSize) === maxSize && t.str.trim());
+  const headlineItem = realItems.find((t) => Math.round(t.fontSize) === maxSize && t.str.trim());
 
   const bodySizes = [...sizeCounts.entries()]
     .filter(([size]) => size < maxSize)
     .sort((a, b) => b[1] - a[1]);
   const bodySize = bodySizes[0]?.[0];
-  const bodyItem = textItems.find((t) => Math.round(t.fontSize) === bodySize && t.str.trim());
+  const bodyItem = realItems.find((t) => Math.round(t.fontSize) === bodySize && t.str.trim());
 
   const headline = resolveFont(headlineItem?.fontName, 'headline');
   const body = resolveFont(bodyItem?.fontName, 'body');
+
+  console.log('[font detection]', {
+    headlineRaw: headlineItem?.fontName,
+    headlineResult: headline,
+    bodyRaw: bodyItem?.fontName,
+    bodyResult: body,
+    type3Count: textItems.filter((t) => t.isType3).length,
+    realCount: realItems.length,
+  });
 
   return { headline, body };
 }
@@ -520,6 +758,70 @@ const HEADING_KEYWORDS =
 const SENDER_LABEL = /(prepared by|from)\s*:?\s*(.+)/i;
 const RECIPIENT_LABEL = /(prepared for|to)\s*:?\s*(.+)/i;
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+const PHONE_RE = /(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}/;
+const URL_RE = /https?:\/\/[^\s]+|www\.[^\s]+/i;
+
+/**
+ * Extract design-level metadata (accent color, logo, phone) from page 1's
+ * shapes, images, and text items. Called once during import for the first page.
+ */
+export function extractDesignData(shapes, images, textItems, bgColor) {
+  const result = { accentColor: null, logoDataUrl: null, phoneNumber: null };
+
+  // --- Accent color: most frequent non-white, non-bg fill/stroke from shapes ---
+  if (shapes?.length) {
+    const colorCounts = new Map();
+    const isBg = (c) => {
+      if (!c) return true;
+      if (bgColor && c.toLowerCase() === bgColor.toLowerCase()) return true;
+      // Skip white, near-white, black, near-black
+      const hex = c.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16);
+      const g = parseInt(hex.substring(2, 4), 16);
+      const b = parseInt(hex.substring(4, 6), 16);
+      const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+      if (brightness > 240 || brightness < 15) return true;
+      // Skip very desaturated (grays)
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      if (max - min < 15) return true;
+      return false;
+    };
+    for (const s of shapes) {
+      if (s.fill && !isBg(s.fill)) {
+        colorCounts.set(s.fill, (colorCounts.get(s.fill) || 0) + s.width * s.height);
+      }
+      if (s.stroke && !isBg(s.stroke)) {
+        colorCounts.set(s.stroke, (colorCounts.get(s.stroke) || 0) + (s.strokeWidth || 1) * Math.max(s.width, s.height));
+      }
+    }
+    if (colorCounts.size > 0) {
+      result.accentColor = [...colorCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    }
+  }
+
+  // --- Logo: smallest non-background image near the top of the page ---
+  if (images?.length) {
+    const candidates = images
+      .filter((img) => img.dataUrl && !img.isBackground && img.width > 10 && img.height > 10)
+      .sort((a, b) => (a.width * a.height) - (b.width * b.height));
+    // Prefer images in the top third of the page
+    const topCandidates = candidates.filter((img) => img.y < (images[0]?.srcHeight || 1000) * 0.35);
+    const logo = topCandidates[0] || candidates[0];
+    if (logo) result.logoDataUrl = logo.dataUrl;
+  }
+
+  // --- Phone number from text ---
+  if (textItems?.length) {
+    const allText = textItems.map((t) => t.str).join(' ');
+    const phoneMatch = allText.match(PHONE_RE);
+    if (phoneMatch && phoneMatch[0].replace(/\D/g, '').length >= 7) {
+      result.phoneNumber = phoneMatch[0].trim();
+    }
+  }
+
+  return result;
+}
 
 /**
  * Group PDF text items into lines, classify by font-size tier, and pull out
@@ -534,6 +836,7 @@ export function extractContent(textItems) {
   const Y_TOLERANCE = 3;
   for (const item of sorted) {
     if (!item.str.trim()) continue;
+    if (item.isType3) continue;
     if (current && Math.abs(current.y - item.y) <= Y_TOLERANCE) {
       current.str += item.str;
       current.maxSize = Math.max(current.maxSize, item.fontSize);
@@ -558,11 +861,31 @@ export function extractContent(textItems) {
   };
 
   const filled = { sections: [], notes: [] };
-  const titleLine = lines.find((l) => tierOf(l.maxSize) === 'title');
-  filled.detectedHeadline = titleLine?.str.trim() || '';
+  const titleLines = lines.filter((l) => tierOf(l.maxSize) === 'title');
+  // Join adjacent title lines (e.g. "Motoka x LagRide, Drive-to-" + "Own Compliance")
+  // into a single headline when they are vertically close.
+  let detectedHeadline = '';
+  if (titleLines.length) {
+    const joined = [];
+    let current = titleLines[0].str.trim();
+    for (let i = 1; i < titleLines.length; i++) {
+      const gap = Math.abs(titleLines[i].y - titleLines[i - 1].y);
+      // Title lines are large; gap < 4× maxSize means same headline block
+      if (gap < titleLines[i - 1].maxSize * 4) {
+        current += ' ' + titleLines[i].str.trim();
+      } else {
+        joined.push(current);
+        current = titleLines[i].str.trim();
+      }
+    }
+    joined.push(current);
+    detectedHeadline = joined[0] || '';
+  }
+  filled.detectedHeadline = detectedHeadline;
   if (filled.detectedHeadline) {
     filled.notes.push(`Detected headline: "${filled.detectedHeadline}" (used as a structural hint only, never copied verbatim).`);
   }
+  const titleSet = new Set(titleLines);
 
   let senderName = '';
   let recipientCompany = '';
@@ -573,7 +896,16 @@ export function extractContent(textItems) {
 
   for (const line of lines) {
     const text = line.str.trim();
-    if (!text || line === titleLine) continue;
+    if (!text || titleSet.has(line)) continue;
+
+    // Filter decorative / non-content lines that pollute the tone sample:
+    // - single-char markers like "x" (close icon)
+    // - kicker labels that sit directly above the headline (e.g. "A PARTNERSHIP PROPOSAL")
+    // - footer lines that are just contact info
+    if (text.length <= 2) continue;
+    // Skip if line is >90% uppercase and <40 chars and sits flush above a title
+    // (heuristic for kickers like "A PARTNERSHIP PROPOSAL")
+    if (text.length < 40 && text === text.toUpperCase() && /PARTNERSHIP|PROPOSAL|CONFIDENTIAL/i.test(text)) continue;
 
     const senderMatch = text.match(SENDER_LABEL);
     if (senderMatch && !senderName) senderName = senderMatch[2].trim();
@@ -584,7 +916,16 @@ export function extractContent(textItems) {
     const emailMatch = text.match(EMAIL_RE);
     if (emailMatch && !contactEmail) contactEmail = emailMatch[0];
 
-    if (senderMatch || recipientMatch) continue; // don't also treat label lines as body content
+    // Don't treat sender/recipient/email/phone-only lines as body copy
+    if (senderMatch || recipientMatch) continue;
+    if (emailMatch) continue;
+    if (PHONE_RE.test(text) && text.replace(/\D/g, '').length >= 7 && text.length < 80) {
+      // Phone-like line that is mostly numbers/symbols — skip from intro
+      const digits = text.replace(/\D/g, '');
+      if (digits.length >= 10 && text.length < 50) continue;
+    }
+    // Skip footer-style lines containing the website + email concatenated without space
+    if (/motoka\.ng/i.test(text) && /@/.test(text)) continue;
 
     const tier = tierOf(line.maxSize);
     if (tier === 'heading' && HEADING_KEYWORDS.test(text)) {
@@ -666,56 +1007,67 @@ function sampleBlockColors(canvas, x, y, w, h) {
  * background color sampled from the block's edge pixels. This strips
  * baked-in text from the rendered page image so the live preview's
  * contenteditable overlays are the only visible text.
+ *
+ * Erases at the per-text-item level (exact bounding boxes from getTextContent)
+ * rather than grouped blocks, so only text pixels are painted over — logos,
+ * shapes, and graphics remain untouched.
  */
-function eraseTextBlocks(canvas, blocks) {
-  if (!blocks || blocks.length === 0) return;
+function eraseTextItems(canvas, textItems) {
+  if (!textItems || textItems.length === 0) return;
   const ctx = canvas.getContext('2d');
 
-  for (const block of blocks) {
-    const cx = Math.max(0, Math.floor(block.x));
-    const cy = Math.max(0, Math.floor(block.y));
-    const cw = Math.min(Math.ceil(block.width), canvas.width - cx);
-    const ch = Math.min(Math.ceil(block.height), canvas.height - cy);
-    if (cw <= 0 || ch <= 0) continue;
+  for (const item of textItems) {
+    if (!item.str.trim()) continue;
+    const cx = Math.max(0, Math.floor(item.canvasX));
+    const cy = Math.max(0, Math.floor(item.canvasY));
+    const cw = Math.max(1, Math.ceil(item.canvasWidth));
+    const ch = Math.max(1, Math.ceil(item.canvasHeight));
+    if (cx >= canvas.width || cy >= canvas.height) continue;
 
-    const edgeColor = sampleEdgeColor(canvas, cx, cy, cw, ch);
-    ctx.fillStyle = edgeColor;
+    const { bg } = sampleBlockColors(canvas, cx, cy, cw, ch);
+    ctx.fillStyle = bg;
     ctx.fillRect(cx, cy, cw, ch);
   }
 }
 
 /**
- * Sample the most-common color along the 1-pixel border of a canvas
- * rectangle. Edge pixels are almost always page background (text rarely
- * touches the exact bounding-box edge).
+ * Paint over background images on the canvas using the local background color
+ * sampled from the image's edge pixels. The image will be re-rendered as a
+ * positioned div with reduced opacity in the live preview.
  */
-function sampleEdgeColor(canvas, x, y, w, h) {
+function eraseBackgroundImages(canvas, bgImages) {
+  if (!bgImages || bgImages.length === 0) return;
   const ctx = canvas.getContext('2d');
-  const { data } = ctx.getImageData(x, y, Math.max(1, Math.min(w, canvas.width - x)), Math.max(1, Math.min(h, canvas.height - y)));
-  const cw = Math.max(1, Math.min(w, canvas.width - x));
 
+  for (const img of bgImages) {
+    const cx = Math.max(0, Math.floor(img.x));
+    const cy = Math.max(0, Math.floor(img.y));
+    const cw = Math.max(1, Math.ceil(img.width));
+    const ch = Math.max(1, Math.ceil(img.height));
+    if (cx >= canvas.width || cy >= canvas.height) continue;
+
+    const { bg } = sampleBlockColors(canvas, cx, cy, cw, ch);
+    ctx.fillStyle = bg;
+    ctx.fillRect(cx, cy, cw, ch);
+  }
+}
+
+/**
+ * Sample the most-common color in the top-left 20x20 pixel region.
+ * This is reliably the page background in virtually all PDFs.
+ */
+function samplePageBackground(canvas) {
+  const size = 20;
+  const ctx = canvas.getContext('2d');
+  const w = Math.min(size, canvas.width);
+  const h = Math.min(size, canvas.height);
+  if (w <= 0 || h <= 0) return '#ffffff';
+  const { data } = ctx.getImageData(0, 0, w, h);
   const counts = new Map();
-
-  function sample(px, py) {
-    const idx = (py * cw + px) * 4;
-    if (idx + 2 < data.length) {
-      const key = `${data[idx]},${data[idx + 1]},${data[idx + 2]}`;
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
+  for (let i = 0; i < data.length; i += 4) {
+    const key = `${data[i]},${data[i + 1]},${data[i + 2]}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
   }
-
-  const lastRow = Math.min(h - 1, data.length / (cw * 4) - 1);
-  for (let px = 0; px < cw; px++) {
-    sample(px, 0);
-    if (lastRow > 0) sample(px, lastRow);
-  }
-  const lastCol = cw - 1;
-  const rows = Math.min(h, Math.floor(data.length / (cw * 4)));
-  for (let py = 0; py < rows; py++) {
-    sample(0, py);
-    if (lastCol > 0) sample(lastCol, py);
-  }
-
   if (counts.size === 0) return '#ffffff';
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
   return rgbToHex(top[0], top[1], top[2]);
@@ -730,29 +1082,83 @@ export function buildTextBlocks(canvas, textItems) {
   if (!textItems || textItems.length === 0) return [];
 
   const sorted = [...textItems].sort((a, b) => a.canvasY - b.canvasY || a.canvasX - b.canvasX);
-  const lines = [];
+
+  // Pass 1: group items into lines by Y tolerance
+  const lineGroups = [];
   let current = null;
   for (const item of sorted) {
     if (!item.str.trim()) continue;
+    if (item.isType3) continue;
+    if (item.canvasWidth < item.fontSize * 0.2) continue;
+    if (/^[\u2000-\u2FFF\uFE00-\uFEFF\u2E80-\u9FFF]+$/.test(item.str.trim())) continue;
+    if (/fontawesome|material.?icons|glyph|icon|symbol|dingbats|emoji/i.test(item.fontName || '')) continue;
+    if (item.fontSize < 6) continue;
     const yTol = Math.max(3, (item.fontSize || 12) * 0.45);
-    if (current && Math.abs(current.top - item.canvasY) <= yTol) {
-      current.str += item.str;
-      current.left = Math.min(current.left, item.canvasX);
-      current.right = Math.max(current.right, item.canvasX + item.canvasWidth);
-      current.top = Math.min(current.top, item.canvasY);
-      current.bottom = Math.max(current.bottom, item.canvasY + item.canvasHeight);
+    if (current && Math.abs(current.yAnchor - item.canvasY) <= yTol) {
+      current.items.push(item);
+      current.yAnchor = Math.min(current.yAnchor, item.canvasY);
       current.maxSize = Math.max(current.maxSize, item.fontSize);
     } else {
       current = {
-        str: item.str,
-        left: item.canvasX,
-        right: item.canvasX + item.canvasWidth,
-        top: item.canvasY,
-        bottom: item.canvasY + item.canvasHeight,
+        items: [item],
+        yAnchor: item.canvasY,
         maxSize: item.fontSize,
       };
-      lines.push(current);
+      lineGroups.push(current);
     }
+  }
+
+  // Pass 2: within each line, sort by X and split into sub-lines when
+  // horizontal gaps are large (e.g. footer items spread across the page).
+  const lines = [];
+  for (const g of lineGroups) {
+    const splitThreshold = (g.maxSize || 12) * 3;
+    g.items.sort((a, b) => a.canvasX - b.canvasX);
+    let str = '';
+    let lastRight = -Infinity;
+    let subLeft = Infinity;
+    let subRight = -Infinity;
+    let subTop = Infinity;
+    let subBottom = -Infinity;
+    let subMax = 0;
+
+    const flush = () => {
+      if (!str.trim()) return;
+      lines.push({
+        str,
+        left: subLeft,
+        right: subRight,
+        top: subTop,
+        bottom: subBottom,
+        maxSize: subMax,
+      });
+    };
+
+    for (const item of g.items) {
+      const gap = item.canvasX - lastRight;
+      if (lastRight > -Infinity && gap > splitThreshold) {
+        flush();
+        str = '';
+        subLeft = Infinity;
+        subRight = -Infinity;
+        subTop = Infinity;
+        subBottom = -Infinity;
+        subMax = 0;
+      }
+      const spaceThreshold = g.maxSize * 0.3;
+      if (lastRight > -Infinity && gap > spaceThreshold) {
+        str += ' ' + item.str;
+      } else {
+        str += item.str;
+      }
+      lastRight = item.canvasX + item.canvasWidth;
+      subLeft = Math.min(subLeft, item.canvasX);
+      subRight = Math.max(subRight, item.canvasX + item.canvasWidth);
+      subTop = Math.min(subTop, item.canvasY);
+      subBottom = Math.max(subBottom, item.canvasY + item.canvasHeight);
+      subMax = Math.max(subMax, item.fontSize);
+    }
+    flush();
   }
 
   const sizes = lines.map((l) => l.maxSize);
@@ -769,7 +1175,7 @@ export function buildTextBlocks(canvas, textItems) {
   return lines
     .filter((l) => l.str.trim())
     .map((l, i) => {
-      const pad = l.maxSize * 0.15;
+      const pad = l.maxSize * 0.05;
       const x = Math.max(0, l.left - pad);
       const y = Math.max(0, l.top - pad);
       const measuredWidth = l.right - l.left + pad * 2;
@@ -780,6 +1186,10 @@ export function buildTextBlocks(canvas, textItems) {
       const width = Math.max(measuredWidth, minWidth);
       const height = Math.max(measuredHeight, minHeight);
       const { bg, fg } = sampleBlockColors(canvas, x, y, width, height);
+      const topPct = canvas.height > 0 ? (y / canvas.height * 100).toFixed(1) : '?';
+      if (y / canvas.height > 0.85 || i < 3) {
+        console.log(`[block ${i}] top=${topPct}% h=${canvas.height}px text="${l.str.slice(0,40)}"`);
+      }
       return {
         id: `block-${i}`,
         text: l.str.trim(),

@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, auth, setAuthToken, getAuthToken } from './api';
 import OnboardingModal from './components/OnboardingModal';
 import DesignStrip from './components/DesignStrip';
-import ChatBar from './components/ChatBar';
-import PreviewDocument from './components/PreviewDocument';
-import LivePreview from './components/LivePreview';
 import ImportPanel from './components/ImportPanel';
+import SetupGapsModal from './components/SetupGapsModal';
 import NavRail from './components/NavRail';
+import BrandKit from './components/BrandKit';
 import ComingSoon from './components/ComingSoon';
 import EditDesignDrawer from './components/EditDesignDrawer';
 import Dashboard from './components/Dashboard';
@@ -21,14 +20,59 @@ import BeccaLayout from './components/BeccaLayout';
 import BeccaSettings from './components/BeccaSettings';
 import CompanyOnboarding from './components/CompanyOnboarding';
 import DesignEditor from './components/design/DesignEditor';
+import EditorCanvas from './components/EditorCanvas';
 import './App.css';
 
 const DEFAULT_FONT = 'Inter';
+
+// Detect only the gaps that are genuinely unresolvable from the PDF itself:
+// an unrecoverable font name (heuristic guess) and an ambiguous logo region
+// (0 or 2+ small near-top images). One clear candidate is adopted silently.
+function getExtractionGaps({ fonts, page1 }) {
+  const gaps = {
+    needsFontConfirmation: false,
+    needsLogoSelection: false,
+    logoCandidates: [],
+    detectedHeadline: null,
+    detectedBody: null,
+  };
+
+  if (fonts) {
+    gaps.detectedHeadline = fonts.headline?.family || null;
+    gaps.detectedBody = fonts.body?.family || null;
+    gaps.headlineDetectedName = fonts.headline?.detectedName || null;
+    gaps.bodyDetectedName = fonts.body?.detectedName || null;
+    gaps.headlineOutcome = fonts.headline?.outcome || null;
+    gaps.bodyOutcome = fonts.body?.outcome || null;
+    if (fonts.headline?.outcome === 'heuristic' || fonts.body?.outcome === 'heuristic') {
+      gaps.needsFontConfirmation = true;
+    }
+  }
+
+  const imgs = (page1?.images || []).filter((img) => img.dataUrl);
+  const pageW = page1?.width || 1041;
+  const pageH = page1?.height || 1339;
+  const candidates = imgs
+    .filter((img) => img.width < pageW * 0.4 && img.height < pageH * 0.25 && img.y / pageH < 0.15)
+    .map((img, i) => ({ id: `logo-${i}`, dataUrl: img.dataUrl, x: img.x, y: img.y }));
+  gaps.logoCandidates = candidates;
+
+  if (!page1?.designData?.logoDataUrl) {
+    if (candidates.length === 1) {
+      gaps.singleCandidate = candidates[0];
+    } else {
+      gaps.needsLogoSelection = true;
+    }
+  }
+  return gaps;
+}
+
 const ACTIVE_ID_KEY = 'homing:activeDesignId';
 const THEME_KEY = 'homing:theme';
 
 const SECTION_META = {
   proposals: { name: 'Proposal', status: 'Tailored proposal generator' },
+  brandkit: { name: 'Brand Kit', status: 'Your brand identity & style' },
   recipients: { name: 'Recipients', status: 'Manage your email list' },
   campaigns: { name: 'Campaigns', status: 'Send proposals at scale' },
   dashboard: { name: 'Dashboard', status: 'Your saved proposals' },
@@ -45,6 +89,7 @@ export default function App() {
   const [section, setSection] = useState('becca');
   const [theme, setTheme] = useState(() => (localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'));
   const [designs, setDesigns] = useState([]);
+  const [designsLoaded, setDesignsLoaded] = useState(false);
   const [activeDesignId, setActiveDesignId] = useState(null);
   const [proposals, setProposals] = useState([]);
   const [currentProposal, setCurrentProposal] = useState(null);
@@ -58,6 +103,7 @@ export default function App() {
   const [tab, setTab] = useState('setup'); // 'setup' | 'generate'
   const [editOpen, setEditOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [setupGaps, setSetupGaps] = useState(null);
   const [allProposals, setAllProposals] = useState([]);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | pending | saving | saved | error
@@ -84,6 +130,7 @@ export default function App() {
   const [authHint, setAuthHint] = useState('');
 
   const bootstrapped = useRef(false);
+  const importSourceRef = useRef('manual'); // 'onboarding' = seed the brand kit, 'manual' = leave it alone
   const saveTimers = useRef({});
   const savedResetTimer = useRef(null);
   const pendingProposalId = useRef(null);
@@ -156,6 +203,8 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to load designs', err);
+    } finally {
+      setDesignsLoaded(true);
     }
 
     let loaded = { topics: [], briefings: [] };
@@ -208,6 +257,27 @@ export default function App() {
     () => designs.find((d) => d.id === activeDesignId) || null,
     [designs, activeDesignId]
   );
+
+  // Brand kit is always usable: if nothing is active when it opens, adopt the
+  // first design or quietly create one (no onboarding side effects).
+  useEffect(() => {
+    if (section !== 'brandkit' || !designsLoaded) return;
+    if (activeDesignId && designs.some((d) => d.id === activeDesignId)) return;
+    if (designs.length > 0) {
+      setActiveDesignId(designs[0].id);
+      return;
+    }
+    let cancelled = false;
+    api.createDesign({})
+      .then((created) => {
+        if (cancelled) return;
+        setDesigns((prev) => [...prev, created]);
+        setActiveDesignId(created.id);
+        localStorage.setItem(ACTIVE_ID_KEY, created.id);
+      })
+      .catch((err) => console.error('Failed to create design for brand kit', err));
+    return () => { cancelled = true; };
+  }, [section, designsLoaded, activeDesignId, designs]);
 
   function patchDesign(id, patch, { persist = true } = {}) {
     setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
@@ -279,20 +349,20 @@ export default function App() {
     }
   }
 
-  function handleImportFile(file) {
+  function handleImportFile(file, source = 'manual') {
+    importSourceRef.current = source;
     setImportFile(file);
     setEditOpen(false);
   }
 
   function handleImportDone() {
+    importSourceRef.current = 'manual';
     setImportFile(null);
-    setTab('setup');
-    setEditOpen(true);
   }
 
   function handleOnboardingUpload(file) {
     setShowOnboarding(false);
-    handleImportFile(file);
+    handleImportFile(file, 'onboarding');
   }
   function handleOnboardingSkip() {
     setShowOnboarding(false);
@@ -300,28 +370,75 @@ export default function App() {
     setEditOpen(true);
   }
 
-  function handleExtracted({ content, fonts, notes, sourceImage, blocks, pages }) {
+  function handleExtracted({ content, fonts, notes, sourceImage, blocks, pages, palette }) {
     if (!activeDesign) return;
     const patch = {};
     const fillNotes = [...notes];
 
-    if (content) {
+    // Only the onboarding upload (the user's own company PDF) may seed the
+    // brand kit. Manual imports (master proposals to rebrand, etc.) persist
+    // document structure but never touch brand fields.
+    const fromOnboarding = importSourceRef.current === 'onboarding';
+
+    if (content && fromOnboarding) {
       if (content.senderName && !activeDesign.senderName) patch.senderName = content.senderName;
       if (content.contactEmail && !activeDesign.tagline) patch.tagline = content.contactEmail;
-      if (content.styleSample && !activeDesign.styleSample) patch.styleSample = content.styleSample;
+      // Overwrite a polluted tone sample on re-import (old bug left "x A PARTNERSHIP..." in styleSample)
+      const isPollutedTone = activeDesign.styleSample?.startsWith('x ') || activeDesign.styleSample?.includes('Own Compliance');
+      if (content.styleSample && (!activeDesign.styleSample || isPollutedTone)) patch.styleSample = content.styleSample;
       if (content.sections?.length && (activeDesign.staticSections || []).length === 0) {
         patch.staticSections = content.sections;
       }
-      if (content.detectedHeadline) patch.detectedHeadline = content.detectedHeadline;
     }
+    // Always refresh headline hint from the PDF — it's the structural anchor
+    if (content?.detectedHeadline) patch.detectedHeadline = content.detectedHeadline;
 
-    if (fonts) {
-      if (activeDesign.headlineFont === DEFAULT_FONT) patch.headlineFont = fonts.headline.family;
-      if (activeDesign.bodyFont === DEFAULT_FONT) patch.bodyFont = fonts.body.family;
+    if (fonts && fromOnboarding) {
+      patch.headlineFont = fonts.headline.family;
+      patch.bodyFont = fonts.body.family;
       fillNotes.push(
         `Headline font ${fonts.headline.outcome === 'exact' ? 'matched' : fonts.headline.outcome === 'metric-compatible' ? 'swapped to a metric-compatible font' : 'guessed'}: ${fonts.headline.family}.`,
         `Body font ${fonts.body.outcome === 'exact' ? 'matched' : fonts.body.outcome === 'metric-compatible' ? 'swapped to a metric-compatible font' : 'guessed'}: ${fonts.body.family}.`
       );
+    }
+
+    // Extract design-level data (accent color, logo, phone) from page 1
+    const page1 = pages?.[0];
+    const dd = page1?.designData;
+    if (dd && fromOnboarding) {
+      if (dd.accentColor) {
+        patch.accentColor = dd.accentColor;
+        fillNotes.push(`Detected accent color: ${dd.accentColor}.`);
+      } else if (palette?.length) {
+        // Fallback when the PDF paints colour as images, not vector shapes
+        const fallbackAccent = palette[0];
+        if (fallbackAccent && fallbackAccent.toLowerCase() !== '#ffffff') {
+          patch.accentColor = fallbackAccent;
+          fillNotes.push(`Detected accent color: ${fallbackAccent} (from palette).`);
+        }
+      }
+      if (dd.logoDataUrl && !activeDesign.logoDataUrl) {
+        patch.logoDataUrl = dd.logoDataUrl;
+        fillNotes.push('Extracted logo from the design.');
+      }
+      if (dd.phoneNumber && !activeDesign.tagline) {
+        patch.tagline = (patch.tagline || activeDesign.tagline || '') +
+          (patch.tagline ? ' · ' : '') + dd.phoneNumber;
+        fillNotes.push(`Extracted phone: ${dd.phoneNumber}.`);
+      }
+    } else if (palette?.length && fromOnboarding) {
+      const fallbackAccent = palette[0];
+      if (fallbackAccent && fallbackAccent.toLowerCase() !== '#ffffff') {
+        patch.accentColor = fallbackAccent;
+        fillNotes.push(`Detected accent color: ${fallbackAccent} (from palette).`);
+      }
+    }
+
+    // Background color from page 1 shapes
+    const bgColor = page1?.bgColor;
+    if (bgColor && fromOnboarding) {
+      patch.backgroundColor = bgColor;
+      fillNotes.push(`Detected background color: ${bgColor}.`);
     }
 
     if (sourceImage) {
@@ -339,9 +456,31 @@ export default function App() {
         width: p.width,
         height: p.height,
         blocks: p.blocks,
+        images: p.images || [],
+        shapes: p.shapes || [],
+        bgColor: p.bgColor || null,
       }));
       patch.pageOverrides = {};
       setCurrentPage(1);
+    }
+
+    // Surface only the real gaps to the user (unrecoverable font names,
+    // ambiguous logo) — and only for the onboarding import. Manual imports
+    // (master proposals to rebrand) must not touch the brand kit.
+    if (fromOnboarding) {
+      const gaps = getExtractionGaps({ fonts, page1 });
+      // Homing already knows the company's logo from account/design setup — don't re-ask
+      gaps.companyName = activeDesign.senderName || activeDesign.name || '';
+      if (activeDesign.logoDataUrl) {
+        gaps.needsLogoSelection = false;
+      }
+      if (gaps.singleCandidate && !patch.logoDataUrl && !activeDesign.logoDataUrl) {
+        patch.logoDataUrl = gaps.singleCandidate.dataUrl;
+        fillNotes.push('Adopted the one clear logo candidate found in the design.');
+      }
+      setSetupGaps(gaps.needsFontConfirmation || gaps.needsLogoSelection ? gaps : null);
+    } else {
+      fillNotes.push(`Imported ${pages?.length || 1} page(s) — brand kit left untouched.`);
     }
 
     patch.extractionNote = fillNotes.join(' ');
@@ -361,6 +500,15 @@ export default function App() {
       const next = { ...(activeDesign.textOverrides || {}), [blockId]: text };
       patchDesign(activeDesign.id, { textOverrides: next });
     }
+  }
+
+  function handlePageTextOverride(pageNum, blockId, text) {
+    if (!activeDesign) return;
+    const currentOverrides = activeDesign.pageOverrides || {};
+    const pageKey = String(pageNum);
+    const pageOverrides = { ...(currentOverrides[pageKey] || {}), [blockId]: text };
+    const next = { ...currentOverrides, [pageKey]: pageOverrides };
+    patchDesign(activeDesign.id, { pageOverrides: next });
   }
 
   function handleAccentPicked(hex) {
@@ -390,9 +538,22 @@ export default function App() {
         ? (activeDesign.pages[0]?.blocks || [])
         : (activeDesign.sourceTextBlocks || []);
       if (allBlocks.length && (proposal.opening || proposal.bodyParagraphs?.length || proposal.closing)) {
-        const titleBlock = allBlocks.find((b) => b.tier === 'title');
+        const titleBlocks = allBlocks.filter((b) => b.tier === 'title').sort((a, b) => a.y - b.y);
+        const titleBlock = titleBlocks[0] || null;
+        const titleTop = titleBlock ? titleBlock.y : Infinity;
+        const titleBottom = titleBlocks.length ? Math.max(...titleBlocks.map((b) => b.y + b.height)) : -Infinity;
+        // Filter out decorative/marker blocks that would produce vertical / overlapping text:
+        // - tiny width (e.g. the "x" close icon: 17×30px) → character-per-line wrapping
+        // - single-char text in a narrow box
+        // - kicker sitting flush on top of the headline (e.g. "A PARTNERSHIP PROPOSAL" at y=1050 hugging title at y=1080)
         const bodyBlocks = allBlocks
           .filter((b) => b.tier === 'body' && (!titleBlock || b.id !== titleBlock.id))
+          .filter((b) => {
+            if (b.width < 40) return false;
+            if (b.text.trim().length <= 2 && b.width < 100) return false;
+            if (titleBlock && Math.abs(b.y + b.height - titleTop) < 40) return false;
+            return true;
+          })
           .sort((a, b) => a.y - b.y);
 
         // Group body blocks into paragraph zones by vertical proximity
@@ -437,12 +598,20 @@ export default function App() {
           if (pages.length > 1) {
             const currentOverrides = activeDesign.pageOverrides || {};
             const page1Overrides = { ...(currentOverrides['1'] || {}), ...newOverrides };
-            if (titleBlock && proposal.headline) page1Overrides[titleBlock.id] = proposal.headline;
+            if (titleBlock && proposal.headline) {
+              page1Overrides[titleBlock.id] = proposal.headline;
+              // Clear any secondary title fragments ("Own Compliance" at y=1150) so
+              // they don't ghost underneath the merged headline.
+              for (let k = 1; k < titleBlocks.length; k++) page1Overrides[titleBlocks[k].id] = '';
+            }
             patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
           } else {
             const currentOverrides = activeDesign.textOverrides || {};
             const next = { ...currentOverrides, ...newOverrides };
-            if (titleBlock && proposal.headline) next[titleBlock.id] = proposal.headline;
+            if (titleBlock && proposal.headline) {
+              next[titleBlock.id] = proposal.headline;
+              for (let k = 1; k < titleBlocks.length; k++) next[titleBlocks[k].id] = '';
+            }
             patchDesign(activeDesign.id, { textOverrides: next });
           }
         } else if (titleBlock && proposal.headline) {
@@ -451,22 +620,28 @@ export default function App() {
           if (pages.length > 1) {
             const currentOverrides = activeDesign.pageOverrides || {};
             const page1Overrides = { ...(currentOverrides['1'] || {}), [titleBlock.id]: proposal.headline };
+            for (let k = 1; k < titleBlocks.length; k++) page1Overrides[titleBlocks[k].id] = '';
             patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
           } else {
             handleTextOverride(titleBlock.id, proposal.headline);
+            // Clear siblings (best-effort) — single-page path has no batch setter
+            for (let k = 1; k < titleBlocks.length; k++) handleTextOverride(titleBlocks[k].id, '');
           }
         }
       } else {
         // Templated mode or no content: only map headline
-        const titleBlock = (activeDesign.sourceTextBlocks || []).find((b) => b.tier === 'title');
+        const tBlocks = (activeDesign.sourceTextBlocks || []).filter((b) => b.tier === 'title').sort((a, b) => a.y - b.y);
+        const titleBlock = tBlocks[0] || null;
         if (titleBlock && proposal.headline) {
           const pages = activeDesign.pages || [];
           if (pages.length > 1) {
             const currentOverrides = activeDesign.pageOverrides || {};
             const page1Overrides = { ...(currentOverrides['1'] || {}), [titleBlock.id]: proposal.headline };
+            for (let k = 1; k < tBlocks.length; k++) page1Overrides[tBlocks[k].id] = '';
             patchDesign(activeDesign.id, { pageOverrides: { ...currentOverrides, '1': page1Overrides } });
           } else {
             handleTextOverride(titleBlock.id, proposal.headline);
+            for (let k = 1; k < tBlocks.length; k++) handleTextOverride(tBlocks[k].id, '');
           }
         }
       }
@@ -529,12 +704,12 @@ export default function App() {
   // ═══════════════════════════════════════════
   // BECCA HANDLERS
   // ═══════════════════════════════════════════
-  async function handleBeccaAddTopic(name, context) {
+  async function handleBeccaAddTopic(name, context, platforms) {
     const existing = beccaTopics.find(t => t.name.toLowerCase() === name.toLowerCase());
     if (existing) return false;
     try {
-      const result = await api.becca.addTopic({ name, context });
-      const newTopic = { id: result.id, name, context, priority: 'medium' };
+      const result = await api.becca.addTopic({ name, context, platforms });
+      const newTopic = { id: result.id, name, context, priority: 'medium', platforms: JSON.stringify(platforms || ['google_news']) };
       setBeccaTopics(prev => [...prev, newTopic]);
       return true;
     } catch { return false; }
@@ -772,6 +947,23 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleResizeMouseDown);
   }, []);
 
+  // ── Keyboard navigation for pages ──
+  useEffect(() => {
+    const totalPages = activeDesign?.pages?.length || 1;
+    function onKeyDown(e) {
+      if (e.target.closest('[contenteditable]') || e.target.closest('input, textarea, select')) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setCurrentPage((p) => Math.min(totalPages, p + 1));
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setCurrentPage((p) => Math.max(1, p - 1));
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [activeDesign]);
+
   if (authLoading) {
     return <div className="app-loading">Loading…</div>;
   }
@@ -826,7 +1018,8 @@ export default function App() {
   return (
     <div className="app-shell">
       <NavRail section={section} onNavigate={setSection}
-        onOpenProfile={() => { setSection('becca'); setBeccaSettingsOpen(true); }} />
+        onOpenProfile={() => { setSection('becca'); setBeccaSettingsOpen(true); }}
+        onLogout={handleLogout} />
 
       <div className="main-area">
         <header className="topbar no-print">
@@ -846,9 +1039,6 @@ export default function App() {
               onClick={toggleTheme}
             >
               <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="theme-toggle-img" />
-            </button>
-            <button type="button" className="btn-secondary" onClick={handleLogout} title="Sign out">
-              Sign out
             </button>
             {section === 'proposals' && (
               <>
@@ -908,6 +1098,22 @@ export default function App() {
                   {showOnboarding && !showCompanySetup && (
                     <OnboardingModal onUpload={handleOnboardingUpload} onSkip={handleOnboardingSkip} />
                   )}
+                  {setupGaps && activeDesign && (
+                    <SetupGapsModal
+                      gaps={setupGaps}
+                      accountLogoUrl={activeDesign.logoDataUrl}
+                      companyName={currentProposal?.companyName || activeDesign.name || activeDesign.senderName}
+                      onConfirm={(vals) => {
+                        const gapPatch = {};
+                        if (vals.headlineFont) gapPatch.headlineFont = vals.headlineFont;
+                        if (vals.bodyFont) gapPatch.bodyFont = vals.bodyFont;
+                        if (vals.logoDataUrl) gapPatch.logoDataUrl = vals.logoDataUrl;
+                        if (Object.keys(gapPatch).length > 0) patchDesign(activeDesign.id, gapPatch);
+                        setSetupGaps(null);
+                      }}
+                      onClose={() => setSetupGaps(null)}
+                    />
+                  )}
                   <div className="editor-sidebar no-print">
                     <DesignStrip
                       designs={designs}
@@ -922,122 +1128,25 @@ export default function App() {
 
                   <div className="editor-canvas">
                     {activeDesign && importFile && (
-                      <div className="app-preview-full">
-                        <ImportPanel file={importFile} onExtracted={handleExtracted}
-                          designId={activeDesignId} onComplete={handleImportDone} />
-                      </div>
+                      <ImportPanel file={importFile} onExtracted={handleExtracted}
+                        designId={activeDesignId} onComplete={handleImportDone} />
                     )}
                     {activeDesign && !importFile && (
-                      <div className="preview-area">
-                        <div className="preview-viewport">
-                          {activeDesign.sourceImageDataUrl ? (
-                            (() => {
-                              const pages = activeDesign.pages || [];
-                              const isMultiPage = pages.length > 1;
-                              // Clamp against stale indices after switching designs
-                              const safePage = Math.min(Math.max(1, currentPage), Math.max(1, pages.length));
-                              const pageData = isMultiPage ? pages[safePage - 1] : null;
-                              const displayDataUrl = pageData?.dataUrl || (isMultiPage ? null : activeDesign.sourceImageDataUrl);
-                              const displayWidth = pageData?.width || activeDesign.sourceImageWidth;
-                              const displayHeight = pageData?.height || activeDesign.sourceImageHeight;
-                              const displayBlocks = pageData?.blocks || activeDesign.sourceTextBlocks || [];
-                              const displayOverrides = isMultiPage
-                                ? ((activeDesign.pageOverrides || {})[String(safePage)] || {})
-                                : (activeDesign.textOverrides || {});
-
-                              return (
-                                <>
-                                   <LivePreview
-                                    sourceImageDataUrl={displayDataUrl}
-                                    sourceImageWidth={displayWidth}
-                                    sourceImageHeight={displayHeight}
-                                    sourceTextBlocks={displayBlocks}
-                                    textOverrides={displayOverrides}
-                                    onOverride={handleTextOverride}
-                                    headlineFont={activeDesign.headlineFont}
-                                    bodyFont={activeDesign.bodyFont}
-                                    backgroundColor={activeDesign.backgroundColor || '#ffffff'}
-                                  />
-                                  {isMultiPage && (
-                                    <div className="pagination-controls no-print">
-                                      <button
-                                        type="button"
-                                        className="pagination-btn"
-                                        onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
-                                        disabled={safePage <= 1}
-                                      >
-                                        ‹
-                                      </button>
-                                      <span className="pagination-counter">{safePage} / {pages.length}</span>
-                                      <button
-                                        type="button"
-                                        className="pagination-btn"
-                                        onClick={() => setCurrentPage(Math.min(pages.length, safePage + 1))}
-                                        disabled={safePage >= pages.length}
-                                      >
-                                        ›
-                                      </button>
-                                    </div>
-                                  )}
-                                </>
-                              );
-                            })()
-                          ) : (
-                            <PreviewDocument design={activeDesign} proposal={currentProposal} companyName={currentProposal?.companyName} />
-                          )}
-                        </div>
-                        {currentProposal && (
-                          <div className="proposal-actions no-print">
-                            <button type="button" className="btn-secondary" onClick={handleExport}>Download PDF</button>
-                            <button type="button" className="btn-secondary" onClick={() => setEditOpen(true)}>Edit proposal</button>
-                            <label className="btn-secondary logo-upload-label">
-                              Company logo
-                              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file || !currentProposal) return;
-                                const reader = new FileReader();
-                                reader.onload = async () => {
-                                  const dataUrl = reader.result;
-                                  setCurrentProposal((prev) => prev ? { ...prev, companyLogo: dataUrl } : prev);
-                                  setProposals((prev) => prev.map((p) => p.id === currentProposal.id ? { ...p, companyLogo: dataUrl } : p));
-                                  try {
-                                    await fetch(`${import.meta.env.VITE_API_BASE || '/api'}/proposals/${currentProposal.id}`, {
-                                      method: 'PUT',
-                                      headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('homing_token') ? { Authorization: `Bearer ${localStorage.getItem('homing_token')}` } : {}) },
-                                      body: JSON.stringify({ companyLogo: dataUrl }),
-                                    });
-                                  } catch (err) {
-                                    console.error('Failed to save company logo', err);
-                                  }
-                                };
-                                reader.readAsDataURL(file);
-                              }} />
-                            </label>
-                          </div>
-                        )}
-                        {generating && (
-                          <div className="generate-progress no-print" role="status" aria-live="polite">
-                            <div className="generate-progress-info">
-                              <span className="generate-progress-spinner" />
-                              <span className="generate-progress-label">Generating your proposal…</span>
-                            </div>
-                            <div className="generate-progress-track">
-                              <div className="generate-progress-fill" />
-                            </div>
-                          </div>
-                        )}
-                        <div className="no-print">
-                          <ChatBar
-                            onGenerate={handleGenerate}
-                            generating={generating}
-                            recentCompanies={recentCompanies}
-                            providers={providers}
-                            activeProvider={activeProvider}
-                            onBatchClick={() => { setTab('batch'); setEditOpen(true); }}
-                            genError={genError}
-                          />
-                        </div>
-                      </div>
+                      <EditorCanvas
+                        activeDesign={activeDesign}
+                        currentPage={currentPage}
+                        setCurrentPage={setCurrentPage}
+                        handlePageTextOverride={handlePageTextOverride}
+                        handleTextOverride={handleTextOverride}
+                        generating={generating}
+                        genError={genError}
+                        providers={providers}
+                        activeProvider={activeProvider}
+                        onGenerate={handleGenerate}
+                        recentCompanies={recentCompanies}
+                        currentProposal={currentProposal}
+                        handleExport={handleExport}
+                      />
                     )}
                   </div>
                   <div className="editor-resizer-right" />
@@ -1090,6 +1199,10 @@ export default function App() {
         ) : section === 'design' ? (
           <div className="section-body design-section">
             <DesignEditor />
+          </div>
+        ) : section === 'brandkit' ? (
+          <div className="section-body brandkit-section">
+            <BrandKit design={activeDesign} onPatch={patchDesign} />
           </div>
         ) : (
           <div className="section-body">

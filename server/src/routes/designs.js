@@ -18,7 +18,9 @@ function serializeDesign(row) {
     senderName: row.sender_name,
     accentColor: row.accent_color,
     backgroundColor: row.background_color || '#ffffff',
+    brandColors: JSON.parse(row.brand_colors || '[]'),
     logoDataUrl: row.logo_data_url,
+    logoVariations: JSON.parse(row.logo_variations || '[]'),
     heroImageDataUrl: row.hero_image_data_url,
     headlineFont: row.headline_font,
     bodyFont: row.body_font,
@@ -148,6 +150,14 @@ router.put('/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'pageOverrides')) {
     sets.push('page_overrides = ?');
     values.push(JSON.stringify(req.body.pageOverrides || {}));
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'brandColors')) {
+    sets.push('brand_colors = ?');
+    values.push(JSON.stringify(req.body.brandColors || []));
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'logoVariations')) {
+    sets.push('logo_variations = ?');
+    values.push(JSON.stringify(req.body.logoVariations || []));
   }
   sets.push('updated_at = ?');
   values.push(nowIso());

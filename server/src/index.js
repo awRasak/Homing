@@ -9,9 +9,10 @@ import batchRouter from './routes/batch.js';
 import campaignsRouter from './routes/campaigns.js';
 import trackingRouter from './routes/tracking.js';
 import beccaRouter from './routes/becca.js';
+import socialRouter from './routes/social.js';
 import authRouter from './routes/auth.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
-import { startScheduler } from './scheduler.js';
+import { startScheduler, startSocialScheduler } from './scheduler.js';
 import { requireAuth } from './auth.js';
 import './db.js';
 
@@ -39,9 +40,11 @@ app.use('/api/recipients', requireAuth, recipientsRouter);
 app.use('/api/campaigns', requireAuth, campaignsRouter);
 app.use('/api/track', requireAuth, trackingRouter);
 app.use('/api/becca', requireAuth, beccaRouter);
+app.use('/api/social', requireAuth, socialRouter);
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Homing server listening on http://localhost:${port}`);
   startScheduler();
+  startSocialScheduler();
 });
