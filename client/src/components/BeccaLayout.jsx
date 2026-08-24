@@ -107,6 +107,7 @@ const ALL_PLATFORMS = [
   { id: 'google_news', label: 'News', icon: '📰' },
   { id: 'youtube', label: 'YouTube', icon: '▶' },
   { id: 'reddit', label: 'Reddit', icon: '◉' },
+  { id: 'nairaland', label: 'Nairaland', icon: '💬' },
   { id: 'twitter', label: 'X', icon: '𝕏' },
   { id: 'tiktok', label: 'TikTok', icon: '♪' },
   { id: 'instagram', label: 'Instagram', icon: '📷' },

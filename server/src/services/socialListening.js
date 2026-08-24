@@ -11,6 +11,7 @@ import { searchTikTok } from './tiktok.js';
 import { searchInstagram } from './instagram.js';
 import { searchFacebook } from './facebook.js';
 import { searchSnapchat } from './snapchat.js';
+import { searchNairaland } from './nairaland.js';
 import { batchSentiment } from './sentiment.js';
 
 const PLATFORM_FETCHERS = {
@@ -21,6 +22,7 @@ const PLATFORM_FETCHERS = {
   instagram: searchInstagram,
   facebook: searchFacebook,
   snapchat: searchSnapchat,
+  nairaland: searchNairaland,
 };
 
 /**
