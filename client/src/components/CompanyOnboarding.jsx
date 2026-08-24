@@ -53,13 +53,16 @@ function Field({ label, hint, children }) {
 
 export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
   const [step, setStep] = useState(0); // 0 website · 1 basics · 2 offer · 3 competition · 4 review
+  const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
   const [scanProgress, setScanProgress] = useState(0);
   const [featIndex, setFeatIndex] = useState(0);
-  const [saving, setSaving] = useState(false);
   const [scannedFrom, setScannedFrom] = useState('');
   const [scannedRegion, setScannedRegion] = useState('');
+  const [settingUpListening, setSettingUpListening] = useState(false);
+  const [listeningProgress, setListeningProgress] = useState('');
+  const [listeningComplete, setListeningComplete] = useState(false);
 
   // form state
   const [website, setWebsite] = useState('');
@@ -151,7 +154,32 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
         value_proposition: valueProposition,
         industries,
       });
-      onComplete();
+
+      // Now auto-create watchlist topics from wizard data
+      setSettingUpListening(true);
+      setListeningProgress('Creating watchlist topics…');
+
+      const topics = [];
+      if (companyName.trim()) topics.push({ name: companyName.trim(), context: 'Brand monitoring — your company mentions', platforms: ['google_news', 'nairaland', 'reddit'] });
+      competitors.filter(Boolean).forEach(c => topics.push({ name: c.trim(), context: 'Competitor intelligence', platforms: ['google_news', 'nairaland', 'reddit'] }));
+      keyProducts.filter(Boolean).forEach(p => topics.push({ name: p.trim(), context: 'Product-specific monitoring', platforms: ['google_news', 'reddit'] }));
+      if (industries.length > 0) topics.push({ name: industries[0] + ' industry trends', context: 'Industry market intelligence', platforms: ['google_news', 'nairaland', 'reddit'] });
+
+      const created = [];
+      for (const t of topics) {
+        try {
+          const res = await api.becca.addTopic(t);
+          created.push(res);
+        } catch { /* skip duplicates */ }
+      }
+
+      if (created.length > 0) {
+        setListeningProgress(`Scanning ${created.length} topics across social platforms…`);
+        // Fire-and-forget: trigger scan on all created topics
+        api.social.scanAll().catch(() => {});
+      }
+
+      setListeningComplete(true);
     } catch {
       alert('Could not save — please try again.');
       setSaving(false);
@@ -174,7 +202,45 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
-        {scanning ? (
+        {listeningComplete ? (
+          /* ── Completion: social listening warm-up ── */
+          <div className="ob-complete" style={{ textAlign: 'center', padding: '48px 32px' }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>✦</div>
+            <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 12 }}>You're all set</div>
+            <div style={{ color: 'var(--muted)', lineHeight: 1.6, maxWidth: 420, margin: '0 auto' }}>
+              Social listening is warming up across Google News, Nairaland, Reddit and YouTube.
+              <br /><br />
+              <strong>{companyName}</strong> is being watched for brand mentions. Competitors and industry topics are being scanned too.
+              <br /><br />
+              Expect your first report in about <strong>10 minutes</strong>. You'll find everything under <em>Watchlist</em> in the sidebar.
+            </div>
+            <button className="btn-save-profile" onClick={onComplete} style={{ marginTop: 24 }}>Got it →</button>
+          </div>
+        ) : settingUpListening ? (
+          /* ── Setting up social listening ── */
+          <div className="scan-showcase">
+            <div className="feat-stage">
+              {FEATURES.map((f, i) => (
+                <div key={f.title} className={`feat-slide ${i === featIndex ? 'active' : ''}`}>
+                  <img src={f.icon} alt="" className="feat-icon" />
+                  <div className="feat-title">{f.title}</div>
+                  <div className="feat-text">{f.text}</div>
+                </div>
+              ))}
+            </div>
+            <div className="feat-dots">
+              {FEATURES.map((f, i) => (
+                <button key={f.title} type="button"
+                  className={`feat-dot ${i === featIndex ? 'active' : ''}`}
+                  onClick={() => setFeatIndex(i)} aria-label={f.title} />
+              ))}
+            </div>
+            <div className="scan-progress-row">
+              <span className="scan-progress-label">{listeningProgress}</span>
+              <span className="setup-spinner" style={{ width: 16, height: 16 }} />
+            </div>
+          </div>
+        ) : scanning ? (
           /* ── Scan showcase: progress + feature carousel ── */
           <div className="scan-showcase">
             <div className="feat-stage">
@@ -318,6 +384,7 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
           )}
         </div>
 
+        {!settingUpListening && !listeningComplete && (
         <div className="modal-footer">
           {step === 0 ? (
             <>
@@ -338,6 +405,7 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
             </>
           )}
             </div>
+        )}
           </>
         )}
       </div>
