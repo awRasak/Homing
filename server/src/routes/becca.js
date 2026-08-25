@@ -69,6 +69,49 @@ function stripThink(s) {
   return out.trim();
 }
 
+// Salvage a JSON object from (possibly truncated) model output: close all
+// open strings/brackets, then chop trailing characters until it parses.
+// Handles partial strings, dangling keys, and cut-off arrays.
+function salvageJson(text) {
+  const i = text.indexOf('{');
+  if (i < 0) return null;
+  let base = text.slice(i);
+
+  const attempt = (s) => {
+    const stack = [];
+    let inStr = false;
+    let esc = false;
+    for (const ch of s) {
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') stack.push(ch);
+      else if (ch === '}' || ch === ']') stack.pop();
+    }
+    let out = s;
+    if (inStr) out += '"';
+    while (stack.length) out += stack.pop() === '{' ? '}' : ']';
+    return out;
+  };
+
+  let s = attempt(base);
+  for (let tries = 0; tries < 80; tries++) {
+    try {
+      JSON.parse(s);
+      return s;
+    } catch {
+      base = base.slice(0, -1);
+      if (!base) return null;
+      s = attempt(base);
+    }
+  }
+  return null;
+}
+
 async function fetchTopicNews(topicName, region = '', maxItems = 5) {
   const loc = resolveNewsLocale(region);
   const scopedQuery = region ? `${topicName} ${region}` : topicName;
@@ -479,8 +522,20 @@ Reply JSON: {"category":"...","competitors":["..."]}`,
     const m = stripThink(briefRaw).match(/\{[\s\S]*\}/);
     if (m) researchHints = m[0];
   }
+  // Pull the analyst's provisional category out of the hints so stage B is
+  // pinned to it, and stage C can hold competitors to it.
+  let researchCategory = '';
+  let researchCompetitors = [];
+  if (researchHints) {
+    try {
+      const hints = JSON.parse(researchHints);
+      researchCategory = String(hints.category || '').trim();
+      researchCompetitors = Array.isArray(hints.competitors) ? hints.competitors.map((c) => String(c).trim()).filter(Boolean).slice(0, 5) : [];
+    } catch { /* hints are advisory only */ }
+  }
   // ── Stage B: full profile extraction (gpt-oss-120b, bigger context) ──
   const scanPromptBody = `${combined}${regionBlock}${researchHints ? `\n\nLive research hints from a web-searching analyst (verify against the site text; keep only what holds): ${researchHints}` : ''}
+${researchCategory ? `\nCATEGORY PINNED by the live analyst: "${researchCategory}". Every competitor you list MUST belong to this exact category. If any hint names a company from a different category (different problem, customer, or business model), DROP it — do not copy it into competitors.` : ''}
 
 Build a company profile as JSON with exactly these keys, in this order:
 "category" (FIRST — 3-6 words naming the EXACT niche by what the product DOES, e.g. 'vehicle ownership renewals platform', 'SME inventory software'. Everything below depends on this; never a broad industry like just 'automotive' or 'fintech'),
@@ -501,17 +556,22 @@ COMPETITOR RULES — follow strictly:
   try {
     let rawJson;
     let lastErr;
-    for (let attempt = 0; attempt < 2 && !rawJson; attempt++) {
+    for (let attempt = 0; attempt < 3 && !rawJson; attempt++) {
       try {
         const reply = await callGroq({
           model: 'gpt-oss-120b',
           temperature: 0.2,
-          maxTokens: 1100,
+          maxTokens: 2000,
           system: 'You are a thorough business analyst. You extract structured company profiles and reply with ONLY a JSON object — no markdown fences, no commentary.',
           user: `Website text for ${host}:\n\n${scanPromptBody}`,
         });
-        if (reply && String(reply).trim()) rawJson = reply;
-        else throw new Error('Model returned an empty reply');
+        if (!reply || !String(reply).trim()) throw new Error('Model returned an empty reply');
+        // Parse inside the loop: a truncated reply must retry, not fail the scan.
+        const text = stripThink(reply);
+        const salvaged = salvageJson(text);
+        if (!salvaged) throw new Error('No parseable JSON in model reply');
+        JSON.parse(salvaged);
+        rawJson = salvaged;
       } catch (err) {
         lastErr = err;
         await sleep(1200);
@@ -519,29 +579,56 @@ COMPETITOR RULES — follow strictly:
     }
     if (!rawJson) throw lastErr || new Error('Scan failed');
 
-    const text = stripThink(rawJson);
-    console.log('[scan] raw reply head:', String(text).slice(0, 240).replace(/\n/g, ' '));
-    let match = text.match(/\{[\s\S]*\}/);
-    if (!match) {
-      // Model may have been cut off mid-JSON — salvage the object if we can.
-      const i = text.indexOf('{');
-      if (i >= 0) {
-        let cand = text.slice(i);
-        const last = cand.lastIndexOf('}');
-        cand = last >= 0 ? cand.slice(0, last + 1) : cand + '}';
-        match = [cand];
-      }
-    }
-    if (!match) throw new Error('No JSON in model reply');
-    const parsed = JSON.parse(match[0]);
+    const parsed = JSON.parse(rawJson);
 
     const pickArr = (v) => Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean).slice(0, 5) : [];
+
+    // ── Stage C: hold competitors to the category (validate & replace) ──
+    // Stage B still drifts toward famous same-industry names; one cheap pass
+    // that must keep/replace each name by the pinned category fixes most of it.
+    let competitors = pickArr(parsed.competitors);
+    const stageCCategory = String(parsed.category || researchCategory || '').trim();
+    // The scanned company is not its own competitor (LLMs occasionally list it).
+    const selfName = String(parsed.company_name || meta.siteName || '').trim().toLowerCase();
+    const hostName = host.replace(/\.[a-z.]+$/i, '').toLowerCase();
+    const dropSelf = (list) => list.filter((c) => {
+      const lc = c.toLowerCase();
+      const head = lc.split(/[(:]/)[0].trim();
+      return !(selfName && (lc.includes(selfName) || selfName.includes(head)))
+        && !(hostName.length > 3 && head.includes(hostName));
+    });
+    competitors = dropSelf(competitors);
+    if (stageCCategory) {
+      try {
+        const checkRaw = await callGroq({
+          model: 'gpt-oss-120b',
+          temperature: 0.1,
+          maxTokens: 400,
+          system: 'You are a strict market analyst. Reply with ONLY a JSON object — no markdown fences, no commentary.',
+          user: `Category (exact niche): "${stageCCategory}"
+Company being scanned: ${String(parsed.company_name || meta.siteName || host)} — ${String(parsed.description || meta.description || '').replace(/\s+/g, ' ').slice(0, 300)}
+Proposed competitors: ${JSON.stringify(competitors)}
+
+For each proposed name: KEEP it only if it truly belongs to that category (same problem, same customer, similar business model — e.g. a renewals/documents platform does NOT compete with car marketplaces like Jiji, Cheki, Cars45). Replace every rejected name with a REAL company from the SAME category${region ? ` that operates in ${region}` : ''}. If the list is empty, propose up to 5 real companies from the category. Prefer lesser-known local players over famous foreign ones. NEVER return an empty list.
+Reply JSON: {"competitors":["up to 5 names, all from the category"]}`,
+        });
+        const cm = stripThink(checkRaw).match(/\{[\s\S]*\}/);
+        if (cm) {
+          const checked = pickArr(JSON.parse(cm[0]).competitors);
+          if (checked.length) competitors = dropSelf(checked);
+        }
+      } catch (err) {
+        console.error('scan-company stage-C validation failed (keeping stage B list):', err.message);
+      }
+    }
+
     res.json({
       profile: {
+        category: stageCCategory,
         company_name: String(parsed.company_name || '').trim() || meta.siteName || '',
         company_description: [String(parsed.description || '').trim(), meta.description].find(s => s.length > 40) || String(parsed.description || '').trim(),
         key_products: pickArr(parsed.key_products),
-        competitors: pickArr(parsed.competitors),
+        competitors,
         target_market: String(parsed.target_market || '').trim(),
         value_proposition: String(parsed.value_proposition || '').trim(),
         industries: pickArr(parsed.industries),
@@ -792,7 +879,9 @@ router.put('/topics/:id', (req, res) => {
 });
 
 router.delete('/topics/:id', (req, res) => {
-  db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run('paused', nowIso(), req.params.id);
+  db.prepare('DELETE FROM becca_topics WHERE id = ?').run(req.params.id);
+  try { db.prepare('DELETE FROM social_mentions WHERE topic_id = ?').run(req.params.id); } catch {}
+  try { db.prepare('DELETE FROM social_trends WHERE topic_id = ?').run(req.params.id); } catch {}
   res.json({ ok: true });
 });
 

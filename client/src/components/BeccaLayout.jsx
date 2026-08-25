@@ -293,8 +293,14 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
                         <button className="topic-menu-item" onClick={() => { handleBriefNow(t); setMenuOpen(null); }} disabled={briefingTopic === t.id}>
                           <span>✦</span> {briefingTopic === t.id ? 'Briefing…' : 'Brief me now'}
                         </button>
-                        <button className="topic-menu-item topic-menu-danger" onClick={() => { handleToggleStatus(t.id); setMenuOpen(null); }}>
+                        <button className="topic-menu-item" onClick={async () => { setMenuOpen(null); try { const r = await api.social.getMentions({ topic_id: t.id, limit: 5 }); const items = r.mentions||[]; if (!items.length) alert('No news yet for this topic — try Scan social first.'); else alert(items.map(m=>`• ${m.title}${m.snippet? ' — '+m.snippet.slice(0,80):''}`).join('\n\n')); } catch(e){ alert('Could not load news: '+e.message); } }}>
+                          <span>📰</span> View news
+                        </button>
+                        <button className="topic-menu-item" onClick={() => { handleToggleStatus(t.id); setMenuOpen(null); }}>
                           <span>⏸</span> Pause
+                        </button>
+                        <button className="topic-menu-item topic-menu-danger" onClick={async () => { if (!confirm(`Delete "${t.name}"?`)) return; setMenuOpen(null); await onRemoveTopic(t.id); if (onRefresh) onRefresh(); }}>
+                          <span>🗑</span> Delete
                         </button>
                       </div>
                     )}
