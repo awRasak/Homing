@@ -400,9 +400,17 @@ router.post('/scan-company', async (req, res) => {
   }
 
   // 1. Homepage first — it drives link discovery and gives us meta tags.
-  const homeHtml = await fetchPageHtml(origin);
+  let homeHtml = await fetchPageHtml(origin);
+  // Retry without www. and with opposite protocol — many .ng sites redirect or block one variant
   if (!homeHtml) {
-    return res.status(422).json({ error: "Couldn't read that site. You can fill in the details manually instead." });
+    const altOrigin = origin.includes('://www.') ? origin.replace('://www.', '://') : origin.replace('://', '://www.');
+    if (altOrigin !== origin) homeHtml = await fetchPageHtml(altOrigin);
+  }
+  if (!homeHtml && origin.startsWith('https://')) {
+    homeHtml = await fetchPageHtml(origin.replace('https://', 'http://'));
+  }
+  if (!homeHtml) {
+    return res.status(422).json({ error: "Couldn't read that site (it may block automated visits or require JavaScript). You can fill in the details manually instead — click \"I'll fill it in myself\"." });
   }
   const meta = extractMeta(homeHtml);
   let homeText = htmlToText(homeHtml).slice(0, 12000);
