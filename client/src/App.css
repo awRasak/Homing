@@ -6166,7 +6166,7 @@ input.input-main:focus {
 }
 .topic-title-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   width: 100%;
 }
@@ -6179,13 +6179,21 @@ input.input-main:focus {
   white-space: normal;
   word-break: break-word;
   display: block;
-  width: 100%;
+}
+.topic-title-row .topic-dot {
+  flex-shrink: 0;
 }
 .topic-row-meta {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+}
+.topic-priority-compact {
+  width: auto;
+  min-width: 72px;
+  flex: 0 0 auto;
 }
 .topic-row-actions {
   display: flex;
