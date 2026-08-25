@@ -6003,13 +6003,13 @@ input.input-main:focus {
 
 .topic-name {
   flex: 1;
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: 0.92rem;
+  font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  min-width: 80px;
 }
 
 .topic-remove {
@@ -7791,4 +7791,104 @@ input.input-main:focus {
 }
 .design-chat-send:hover:not(:disabled) {
   opacity: 0.85;
+}
+
+/* ── Rebrand panel ── */
+.rebrand-panel {
+  background: var(--surface);
+  border-radius: var(--radius-lg, 12px);
+  padding: 1.75rem;
+  width: 520px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  text-align: left;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--grey-border);
+}
+.rebrand-panel h3 {
+  margin: 0 0 6px;
+}
+.rebrand-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.rebrand-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rebrand-slot-thumb {
+  position: relative;
+  height: 72px;
+  border: 2px solid var(--grey-border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.rebrand-slot.checked .rebrand-slot-thumb {
+  border-color: var(--green-dark, #16a34a);
+}
+.rebrand-slot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.rebrand-slot-page {
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.rebrand-slot-hint {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  background: var(--green-dark, #16a34a);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 4px;
+  opacity: 0.75;
+}
+.rebrand-slot-kind {
+  font-size: 11px;
+  padding: 3px 5px;
+  border: 1px solid var(--grey-border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+}
+.rebrand-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.rebrand-summary {
+  border: 1.5px solid var(--grey-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--grey-pale);
+}
+.rebrand-summary-row {
+  font-size: 0.92rem;
+}
+.rebrand-summary-row.dim {
+  font-size: 0.8rem;
+  color: var(--grey-mid);
 }

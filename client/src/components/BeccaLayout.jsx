@@ -241,7 +241,7 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
                     <option value="medium">Med</option>
                     <option value="low">Low</option>
                   </select>
-                  <span className="topic-name">{t.name}</span>
+                  <span className="topic-name" title={t.name || t.context || t.normalized_topic}>{t.name || t.context || t.normalized_topic || '(untitled topic)'}</span>
                   {t.last_fetch_status === 'failed' && (
                     <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
                   )}
@@ -302,7 +302,7 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
           <div className="wp-topics-list">
             {pausedTopics.map(t => (
               <div key={t.id} className="topic-row topic-paused">
-                <span className="topic-name">{t.name}</span>
+                <span className="topic-name" title={t.name || t.context}>{t.name || t.context || t.normalized_topic || '(untitled topic)'}</span>
                 <button className="topic-resume" onClick={() => handleToggleStatus(t.id)} title="Resume">▶</button>
                 <button className="topic-remove" onClick={() => onRemoveTopic(t.id)} title="Delete">×</button>
               </div>
