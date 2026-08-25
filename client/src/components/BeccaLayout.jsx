@@ -239,14 +239,8 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
             const stats = topicStats[t.id];
             return (
               <div key={t.id} className="topic-row topic-row-extended">
-                <div className="topic-row-top">
+                <div className="topic-card-head">
                   <span className={`topic-dot priority-${t.priority || 'medium'}`} />
-                  <select className="topic-priority" value={t.priority || 'medium'}
-                    onChange={e => onUpdateTopic(t.id, { priority: e.target.value })}>
-                    <option value="high">High</option>
-                    <option value="medium">Med</option>
-                    <option value="low">Low</option>
-                  </select>
                   <span className="topic-name" title={t.name || t.context || t.normalized_topic}>{t.name || t.context || t.normalized_topic || '(untitled topic)'}</span>
                   {t.last_fetch_status === 'failed' && (
                     <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
@@ -268,20 +262,28 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
                     <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
                   </div>
                 </div>
-                <div className="topic-platforms">
-                  {topicPlatforms.map(pid => {
-                    const p = ALL_PLATFORMS.find(x => x.id === pid);
-                    return p ? <span key={pid} className="topic-platform-badge" title={p.label}>{p.icon}</span> : null;
-                  })}
-                  {topicPlatforms.length > 1 && (
-                    <button className="topic-expand-btn" onClick={() => {
-                      const next = expandedTopic === t.id ? null : t.id;
-                      setExpandedTopic(next);
-                      if (next) handleLoadStats(t.id);
-                    }}>
-                      {expandedTopic === t.id ? '▾' : '▸'} {topicPlatforms.length} platforms
-                    </button>
-                  )}
+                <div className="topic-row-meta">
+                  <select className="topic-priority" value={t.priority || 'medium'}
+                    onChange={e => onUpdateTopic(t.id, { priority: e.target.value })}>
+                    <option value="high">High</option>
+                    <option value="medium">Med</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <div className="topic-platforms">
+                    {topicPlatforms.map(pid => {
+                      const p = ALL_PLATFORMS.find(x => x.id === pid);
+                      return p ? <span key={pid} className="topic-platform-badge" title={p.label}>{p.icon}</span> : null;
+                    })}
+                    {topicPlatforms.length > 1 && (
+                      <button className="topic-expand-btn" onClick={() => {
+                        const next = expandedTopic === t.id ? null : t.id;
+                        setExpandedTopic(next);
+                        if (next) handleLoadStats(t.id);
+                      }}>
+                        {expandedTopic === t.id ? '▾' : '▸'} {topicPlatforms.length} platforms
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {expandedTopic === t.id && stats?.statsData && (
                   <div className="topic-stats-grid">
