@@ -123,6 +123,17 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
   const [scanningTopic, setScanningTopic] = useState(null);
   const [topicStats, setTopicStats] = useState({});
   const [expandedTopic, setExpandedTopic] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(null);
+
+  // close menu on outside click
+  useEffect(() => {
+    if (menuOpen === null) return;
+    function onDocClick(e) {
+      if (!e.target.closest('.topic-menu-wrap')) setMenuOpen(null);
+    }
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, [menuOpen]);
 
   function handleAdd() {
     if (!newTopic.trim()) return;
@@ -268,21 +279,25 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
                     <option value="medium">Med</option>
                     <option value="low">Low</option>
                   </select>
-                  <div className="topic-row-actions">
-                    <label className="topic-toggle" title="Generate blog content">
-                      <input type="checkbox" checked={!!t.blog_generation_enabled}
-                        onChange={() => handleToggleBlog(t.id)} />
-                      <span className="topic-toggle-label">Blog</span>
-                    </label>
-                    <button className="topic-scan-btn" disabled={scanningTopic === t.id}
-                      onClick={() => handleScanTopic(t)} title="Scan social platforms">
-                      {scanningTopic === t.id ? '...' : '◎'}
-                    </button>
-                    <button className="topic-brief-btn" disabled={briefingTopic === t.id}
-                      onClick={() => handleBriefNow(t)} title="Brief me now">
-                      {briefingTopic === t.id ? '...' : '✦'}
-                    </button>
-                    <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
+                  <div className="topic-menu-wrap">
+                    <button className="topic-menu-btn" onClick={() => setMenuOpen(menuOpen === t.id ? null : t.id)} title="Actions">⋮</button>
+                    {menuOpen === t.id && (
+                      <div className="topic-menu-dropdown">
+                        <label className="topic-menu-item">
+                          <input type="checkbox" checked={!!t.blog_generation_enabled} onChange={() => handleToggleBlog(t.id)} />
+                          <span>Blog generation</span>
+                        </label>
+                        <button className="topic-menu-item" onClick={() => { handleScanTopic(t); setMenuOpen(null); }} disabled={scanningTopic === t.id}>
+                          <span>◎</span> {scanningTopic === t.id ? 'Scanning…' : 'Scan social'}
+                        </button>
+                        <button className="topic-menu-item" onClick={() => { handleBriefNow(t); setMenuOpen(null); }} disabled={briefingTopic === t.id}>
+                          <span>✦</span> {briefingTopic === t.id ? 'Briefing…' : 'Brief me now'}
+                        </button>
+                        <button className="topic-menu-item topic-menu-danger" onClick={() => { handleToggleStatus(t.id); setMenuOpen(null); }}>
+                          <span>⏸</span> Pause
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 {expandedTopic === t.id && stats?.statsData && (
