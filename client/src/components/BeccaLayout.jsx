@@ -239,30 +239,14 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
             const stats = topicStats[t.id];
             return (
               <div key={t.id} className="topic-row topic-row-extended">
-                <div className="topic-card-head">
-                  <span className={`topic-dot priority-${t.priority || 'medium'}`} />
+                <div className="topic-title-row">
                   <span className="topic-name" title={t.name || t.context || t.normalized_topic}>{t.name || t.context || t.normalized_topic || '(untitled topic)'}</span>
                   {t.last_fetch_status === 'failed' && (
                     <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
                   )}
-                  <div className="topic-row-actions">
-                    <label className="topic-toggle" title="Generate blog content">
-                      <input type="checkbox" checked={!!t.blog_generation_enabled}
-                        onChange={() => handleToggleBlog(t.id)} />
-                      <span className="topic-toggle-label">Blog</span>
-                    </label>
-                    <button className="topic-scan-btn" disabled={scanningTopic === t.id}
-                      onClick={() => handleScanTopic(t)} title="Scan social platforms">
-                      {scanningTopic === t.id ? '...' : '◎'}
-                    </button>
-                    <button className="topic-brief-btn" disabled={briefingTopic === t.id}
-                      onClick={() => handleBriefNow(t)} title="Brief me now">
-                      {briefingTopic === t.id ? '...' : '✦'}
-                    </button>
-                    <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
-                  </div>
                 </div>
                 <div className="topic-row-meta">
+                  <span className={`topic-dot priority-${t.priority || 'medium'}`} />
                   <select className="topic-priority" value={t.priority || 'medium'}
                     onChange={e => onUpdateTopic(t.id, { priority: e.target.value })}>
                     <option value="high">High</option>
@@ -283,6 +267,22 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
                         {expandedTopic === t.id ? '▾' : '▸'} {topicPlatforms.length} platforms
                       </button>
                     )}
+                  </div>
+                  <div className="topic-row-actions">
+                    <label className="topic-toggle" title="Generate blog content">
+                      <input type="checkbox" checked={!!t.blog_generation_enabled}
+                        onChange={() => handleToggleBlog(t.id)} />
+                      <span className="topic-toggle-label">Blog</span>
+                    </label>
+                    <button className="topic-scan-btn" disabled={scanningTopic === t.id}
+                      onClick={() => handleScanTopic(t)} title="Scan social platforms">
+                      {scanningTopic === t.id ? '...' : '◎'}
+                    </button>
+                    <button className="topic-brief-btn" disabled={briefingTopic === t.id}
+                      onClick={() => handleBriefNow(t)} title="Brief me now">
+                      {briefingTopic === t.id ? '...' : '✦'}
+                    </button>
+                    <button className="topic-remove" onClick={() => handleToggleStatus(t.id)} title="Pause">⏸</button>
                   </div>
                 </div>
                 {expandedTopic === t.id && stats?.statsData && (

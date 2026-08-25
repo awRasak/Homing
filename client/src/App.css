@@ -6164,18 +6164,27 @@ input.input-main:focus {
   align-items: center;
   gap: 8px;
 }
-.topic-card-head .topic-name {
+.topic-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+.topic-title-row .topic-name {
+  flex: 1;
+  min-width: 0;
   font-size: 0.95rem;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.4;
   white-space: normal;
   word-break: break-word;
+  display: block;
+  width: 100%;
 }
 .topic-row-meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 16px;
   flex-wrap: wrap;
 }
 .topic-row-actions {
