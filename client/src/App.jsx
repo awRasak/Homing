@@ -4,6 +4,7 @@ import OnboardingModal from './components/OnboardingModal';
 import DesignStrip from './components/DesignStrip';
 import ImportPanel from './components/ImportPanel';
 import SetupGapsModal from './components/SetupGapsModal';
+import RebrandPanel from './components/RebrandPanel';
 import NavRail from './components/NavRail';
 import BrandKit from './components/BrandKit';
 import ComingSoon from './components/ComingSoon';
@@ -104,6 +105,7 @@ export default function App() {
   const [editOpen, setEditOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [setupGaps, setSetupGaps] = useState(null);
+  const [rebrandOpen, setRebrandOpen] = useState(false);
   const [allProposals, setAllProposals] = useState([]);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | pending | saving | saved | error
@@ -769,7 +771,6 @@ export default function App() {
 
   function finishCompanySetup() {
     if (setupTimer.current) { clearTimeout(setupTimer.current); setupTimer.current = null; }
-    if (!setupPhase) return;
     const firstName = (beccaProfile?.name || authUser?.name || '').split(' ')[0];
     const company = beccaProfile?.company_name;
     setSetupPhase(null);
@@ -783,6 +784,15 @@ export default function App() {
       `Try a suggestion below, ask me anything, or say \`track [topic]\` and I'll start watching it for you.`
     );
   }
+
+  // Failsafe: if celebration gets stuck on "complete", auto-dismiss after 4s and allow click/ESC
+  useEffect(() => {
+    if (setupPhase !== 'complete') return;
+    const t = setTimeout(() => finishCompanySetup(), 4000);
+    function onEsc(e) { if (e.key === 'Escape') finishCompanySetup(); }
+    document.addEventListener('keydown', onEsc);
+    return () => { clearTimeout(t); document.removeEventListener('keydown', onEsc); };
+  }, [setupPhase]);
 
   async function handleBeccaDismissReminder(id) {
     await api.becca.deleteReminder(id);
@@ -1114,6 +1124,13 @@ export default function App() {
                       onClose={() => setSetupGaps(null)}
                     />
                   )}
+                  {rebrandOpen && activeDesign && (activeDesign.pages?.length > 0 || activeDesign.sourceTextBlocks?.length > 0) && (
+                    <RebrandPanel
+                      design={activeDesign}
+                      onPatch={patchDesign}
+                      onClose={() => setRebrandOpen(false)}
+                    />
+                  )}
                   <div className="editor-sidebar no-print">
                     <DesignStrip
                       designs={designs}
@@ -1143,6 +1160,7 @@ export default function App() {
                         providers={providers}
                         activeProvider={activeProvider}
                         onGenerate={handleGenerate}
+                        onRebrand={() => setRebrandOpen(true)}
                         recentCompanies={recentCompanies}
                         currentProposal={currentProposal}
                         handleExport={handleExport}
@@ -1250,8 +1268,8 @@ export default function App() {
       )}
 
       {setupPhase && (
-        <div className="setup-celebrate-overlay">
-          <div className="setup-celebrate-card">
+        <div className="setup-celebrate-overlay" onClick={finishCompanySetup}>
+          <div className="setup-celebrate-card" onClick={e => e.stopPropagation()}>
             {setupPhase === 'saving' ? (
               <>
                 <div className="setup-spinner" />
@@ -1263,6 +1281,7 @@ export default function App() {
                 <button type="button" className="setup-complete-check" onClick={finishCompanySetup}>✓</button>
                 <div className="setup-celebrate-title">You're all set!</div>
                 <div className="setup-celebrate-sub">Taking you to Homin…</div>
+                <div style={{ marginTop: 8, fontSize: '0.8rem', color: 'var(--grey-light)' }}>click anywhere to continue</div>
               </>
             )}
           </div>
