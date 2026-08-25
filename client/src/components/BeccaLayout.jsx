@@ -197,8 +197,14 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
     return `${days}d ago`;
   }
 
+  const untitled = topics.filter(t => !String(t.name||'').trim() && !String(t.context||'').trim());
   return (
     <div className="watchlist-panel">
+      {untitled.length > 0 && (
+        <div style={{ background: 'rgba(224,80,80,0.08)', border: '1px solid rgba(224,80,80,0.2)', borderRadius: 10, padding: '10px 12px', fontSize: '0.82rem', color: 'var(--ink)' }}>
+          {untitled.length} topic{untitled.length>1?'s':''} have no title and are hidden. <button onClick={async () => { for (const t of untitled) await api.becca.deleteTopic(t.id); if (onRefresh) onRefresh(); }} style={{ marginLeft: 8, background: 'var(--surface)', border: '1px solid var(--grey-border)', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: '0.75rem' }}>Clean up</button>
+        </div>
+      )}
       <div className="wp-section">
         <div className="cp-label">Track a Topic</div>
         <input className="cp-input" type="text" placeholder="Topic name" value={newTopic}
