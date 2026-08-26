@@ -246,14 +246,14 @@ export default function App() {
   }, [activeDesignId]);
 
   useEffect(() => {
-    if (section !== 'dashboard') return;
+    if (section !== 'proposals' || proposalTab !== 'dashboard') return;
     setDashboardLoading(true);
     api
       .listAllProposals()
       .then(setAllProposals)
       .catch((err) => console.error('Failed to load dashboard proposals', err))
       .finally(() => setDashboardLoading(false));
-  }, [section]);
+  }, [section, proposalTab]);
 
   const activeDesign = useMemo(
     () => designs.find((d) => d.id === activeDesignId) || null,
@@ -1216,7 +1216,7 @@ export default function App() {
           </div>
         ) : section === 'design' ? (
           <div className="section-body design-section">
-            <DesignEditor />
+            <DesignEditor design={activeDesign} />
           </div>
         ) : section === 'brandkit' ? (
           <div className="section-body brandkit-section">

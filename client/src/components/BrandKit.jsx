@@ -187,6 +187,14 @@ export default function BrandKit({ design, onPatch }) {
                     onChange={(e) => updateVariation(v.id, { label: e.target.value })}
                     placeholder="e.g. Monochrome"
                   />
+                  {draft.logoDataUrl !== v.dataUrl && (
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={() => set('logoDataUrl', v.dataUrl)}
+                      title="Use this variation as the primary logo"
+                    >Set as primary</button>
+                  )}
                   <button
                     type="button"
                     className="btn-text btn-danger"

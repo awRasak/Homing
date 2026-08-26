@@ -1,15 +1,56 @@
 import { Router } from 'express';
-import { db, nowIso } from '../db.js';
+import { db, nowIso, newId } from '../db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { isPyMuPDFAvailable } from '../pdfTool.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 
 const router = Router();
+
+function serializeProposalRow(row) {
+  return {
+    ...row,
+    designId: row.design_id,
+    companyName: row.company_name,
+    bodyParagraphs: JSON.parse(row.body_paragraphs || '[]'),
+    companyLogo: row.company_logo || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// POST /api/proposals/upsert — create or update the proposal for (designId, companyName)
+router.post('/upsert', (req, res) => {
+  const { designId, companyName, companyLogo, headline, opening, bodyParagraphs, closing, notes } = req.body || {};
+  if (!designId || !String(companyName || '').trim()) {
+    return res.status(400).json({ error: 'designId and companyName are required' });
+  }
+  const design = db.prepare('SELECT id FROM designs WHERE id = ?').get(designId);
+  if (!design) return res.status(404).json({ error: 'Design not found' });
+
+  const name = String(companyName).trim();
+  const ts = nowIso();
+  const existing = db.prepare('SELECT * FROM proposals WHERE design_id = ? AND company_name = ?').get(designId, name);
+  let id;
+  if (existing) {
+    id = existing.id;
+    db.prepare('UPDATE proposals SET company_logo = COALESCE(?, company_logo), updated_at = ? WHERE id = ?')
+      .run(companyLogo ?? null, ts, id);
+  } else {
+    id = newId();
+    db.prepare(
+      `INSERT INTO proposals (id, design_id, company_name, notes, headline, opening, body_paragraphs, closing, company_logo, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, designId, name, notes || '', headline || '', opening || '',
+      JSON.stringify(bodyParagraphs || []), closing || '', companyLogo || null, ts, ts);
+  }
+  res.json(serializeProposalRow(db.prepare('SELECT * FROM proposals WHERE id = ?').get(id)));
+});
 
 // PUT /api/proposals/:id — update proposal (e.g. company_logo)
 router.put('/:id', (req, res) => {
@@ -120,19 +161,47 @@ router.get('/:id/pdf', async (req, res) => {
 
   // Structural path: if we have the original PDF, modify it in-place
   if (design.source_pdf_path && fs.existsSync(design.source_pdf_path)) {
+    // PyMuPDF missing → skip straight to the fallback with a clear reason
+    if (isPyMuPDFAvailable() === false) {
+      console.error('Structural PDF export unavailable: PyMuPDF not installed (pip install pymupdf). Falling back to Puppeteer.');
+    } else {
     try {
       const overrides = {};
       const pageOverrides = JSON.parse(design.page_overrides || '{}');
       const textOverrides = JSON.parse(design.text_overrides || '{}');
       const pages = JSON.parse(design.pages || '[]');
+      const logoSlots = JSON.parse(design.logo_slots || '[]');
 
-      // Merge page overrides + text overrides into a flat block-id map
+      // Per-block bg/fg sampled at import time — so redaction fills match
+      // dark panels etc. Keyed by "pageNum:blockId".
+      const blockMeta = new Map();
+      for (const p of pages) {
+        for (const b of p.blocks || []) {
+          blockMeta.set(`${p.pageNum || 1}:${b.id}`, { bg: b.bg, fg: b.fg });
+        }
+      }
+      const enrich = (pageNum, blockId, text) => {
+        const meta = blockMeta.get(`${pageNum}:${blockId}`);
+        return meta ? { text, bg: meta.bg, fg: meta.fg } : text;
+      };
+
+      // Merge page overrides + text overrides into a per-page map, enriching
+      // every entry with the block's stored colors.
       if (Object.keys(pageOverrides).length > 0) {
         for (const [pageKey, pageOvr] of Object.entries(pageOverrides)) {
-          overrides[`page${pageKey}`] = pageOvr;
+          const pageNum = parseInt(pageKey, 10) || 1;
+          const out = {};
+          for (const [blockId, text] of Object.entries(pageOvr)) {
+            out[blockId] = enrich(pageNum, blockId, text);
+          }
+          overrides[`page${pageKey}`] = out;
         }
       } else if (Object.keys(textOverrides).length > 0) {
-        overrides.page1 = textOverrides;
+        const out = {};
+        for (const [blockId, text] of Object.entries(textOverrides)) {
+          out[blockId] = enrich(1, blockId, text);
+        }
+        overrides.page1 = out;
       }
 
       // If no overrides but we have a proposal, build overrides from the proposal content
@@ -188,13 +257,34 @@ router.get('/:id/pdf', async (req, res) => {
         '--overrides', overridesPath,
       ];
 
-      // Handle company logo replacement
-      if (proposal.company_logo) {
-        const logoPath = path.join(tmpDir, `logo_${proposal.id}.png`);
-        const logoData = proposal.company_logo.replace(/^data:image\/\w+;base64,/, '');
-        fs.writeFileSync(logoPath, Buffer.from(logoData, 'base64'));
-        scriptArgs.push('--logo', logoPath);
-        // Logo rect will be auto-detected by the Python script (find largest image on page 1)
+      // Logo/cover slot replacement: canvas px → PDF points (render scale 1.75).
+      // kind 'logo' gets the recipient logo, kind 'cover' the design's cover image.
+      const RENDER_SCALE = 1.75;
+      const writeTempImage = (dataUrl, name) => {
+        const p = path.join(tmpDir, name);
+        fs.writeFileSync(p, Buffer.from(String(dataUrl).replace(/^data:image\/\w+;base64,/, ''), 'base64'));
+        return p;
+      };
+      const logoImgPath = proposal.company_logo
+        ? writeTempImage(proposal.company_logo, `logo_${proposal.id}.png`)
+        : null;
+      const coverImgPath = design.hero_image_data_url
+        ? writeTempImage(design.hero_image_data_url, `cover_${proposal.id}.png`)
+        : null;
+
+      const slotArgs = [];
+      for (const slot of logoSlots) {
+        const imgPath = slot.kind === 'cover' ? coverImgPath : logoImgPath;
+        if (!imgPath) continue;
+        const scale = 1 / RENDER_SCALE;
+        slotArgs.push('--logo-slot', `${slot.pageNum},${(slot.x * scale).toFixed(2)},${(slot.y * scale).toFixed(2)},${(slot.width * scale).toFixed(2)},${(slot.height * scale).toFixed(2)},${slot.kind === 'cover' ? 'cover' : 'logo'}`);
+        slotArgs.push('--logo-image', imgPath);
+      }
+      scriptArgs.push(...slotArgs);
+
+      // Fallback: no tagged slots → legacy largest-image-on-page-1 swap
+      if (slotArgs.length === 0 && proposal.company_logo) {
+        scriptArgs.push('--logo', logoImgPath);
       }
 
       await execFileAsync('python3', [scriptPath, ...scriptArgs], { timeout: 30000 });
@@ -207,6 +297,7 @@ router.get('/:id/pdf', async (req, res) => {
     } catch (err) {
       console.error('Structural PDF export failed, falling back to Puppeteer:', err.message);
     }
+    } // end PyMuPDF-available else
   }
 
   // Fallback: Puppeteer path

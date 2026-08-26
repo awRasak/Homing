@@ -12,8 +12,9 @@ import beccaRouter from './routes/becca.js';
 import socialRouter from './routes/social.js';
 import authRouter from './routes/auth.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
-import { startScheduler, startSocialScheduler } from './scheduler.js';
+import { startScheduler } from './scheduler.js';
 import { requireAuth } from './auth.js';
+import { probePyMuPDF } from './pdfTool.js';
 import './db.js';
 
 const app = express();
@@ -45,6 +46,6 @@ app.use('/api/social', requireAuth, socialRouter);
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Homing server listening on http://localhost:${port}`);
+  probePyMuPDF();
   startScheduler();
-  startSocialScheduler();
 });

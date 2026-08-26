@@ -1,6 +1,6 @@
 import { CANVAS_SIZES } from './DesignCanvas';
 
-export default function DesignToolbar({ canvasSize, onSizeChange, onAddText, onAddRect, onAddCircle, onAddImage, onDelete, onUndo, onRedo, onExportPng, onExportSvg, onClear, onZoomIn, onZoomOut, onZoomFit }) {
+export default function DesignToolbar({ canvasSize, onSizeChange, onAddText, onAddRect, onAddCircle, onAddImage, onImportLayers, canImportLayers, onDelete, onUndo, onRedo, onExportPng, onExportSvg, onClear, onZoomIn, onZoomOut, onZoomFit }) {
   return (
     <div className="design-toolbar">
       <div className="toolbar-group">
@@ -14,6 +14,11 @@ export default function DesignToolbar({ canvasSize, onSizeChange, onAddText, onA
       <div className="toolbar-divider" />
 
       <div className="toolbar-group">
+        {onImportLayers && (
+          <button className="toolbar-btn toolbar-btn-import" onClick={onImportLayers} disabled={!canImportLayers} title="Import an uploaded proposal page as editable layers">
+            ⧉ Layers
+          </button>
+        )}
         <button className="toolbar-btn" onClick={onAddText} title="Add Text (T)">T</button>
         <button className="toolbar-btn" onClick={onAddRect} title="Add Rectangle">▭</button>
         <button className="toolbar-btn" onClick={onAddCircle} title="Add Circle">○</button>

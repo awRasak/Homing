@@ -110,6 +110,12 @@ export const api = {
     fetch(`${BASE}/proposals/stats`, { headers: authHeaders() }).then(handle),
   getProposal: (designId, proposalId) =>
     fetch(`${BASE}/designs/${designId}/proposals/${proposalId}`, { headers: authHeaders() }).then(handle),
+  upsertProposal: (data) =>
+    fetch(`${BASE}/proposals/upsert`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: jsonBody(data),
+    }).then(handle),
 
   generate: (designId, { companyName, notes, provider, model }) =>
     fetch(`${BASE}/designs/${designId}/generate`, {

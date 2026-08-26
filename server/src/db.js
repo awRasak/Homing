@@ -70,6 +70,7 @@ try {
     ["background_color", "TEXT NOT NULL DEFAULT '#ffffff'"],
     ["brand_colors", "TEXT NOT NULL DEFAULT '[]'"],
     ["logo_variations", "TEXT NOT NULL DEFAULT '[]'"],
+    ["logo_slots", "TEXT NOT NULL DEFAULT '[]'"],
   ];
   for (const [name, def] of newColumns) {
     if (!existingColumns.has(name)) {

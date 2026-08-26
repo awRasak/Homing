@@ -8,29 +8,35 @@ const NAV_ITEMS = [
 export default function NavRail({ section, onNavigate, onOpenProfile, onLogout }) {
   return (
     <nav className="nav-rail no-print">
-      <div className="nav-logo" onClick={() => onNavigate('proposals')} title="Homing">
+      <button type="button" className="nav-logo" onClick={() => onNavigate('proposals')} aria-label="Homing" title="Homing">
         <img src="/icons/logomark.png" alt="" className="nav-logo-img" />
-      </div>
+      </button>
       {NAV_ITEMS.map((item) => (
-        <div
+        <button
+          type="button"
           key={item.id}
           className={section === item.id ? 'nav-item active' : 'nav-item'}
           title={item.title}
+          aria-label={item.title}
+          aria-current={section === item.id ? 'page' : undefined}
           onClick={() => onNavigate(item.id)}
         >
           <img src={item.icon} alt="" className="nav-item-img" />
-        </div>
+        </button>
       ))}
       <div className="nav-spacer" />
-      <div
+      <button
+        type="button"
         className={section === 'settings' ? 'nav-item active' : 'nav-item'}
         title="Settings"
+        aria-label="Settings"
+        aria-current={section === 'settings' ? 'page' : undefined}
         onClick={onOpenProfile}
       >
         <img src="/icons/settings.png" alt="" className="nav-item-img" />
-      </div>
+      </button>
       {onLogout && (
-        <div className="nav-item" title="Sign out" onClick={onLogout}>
+        <button type="button" className="nav-item" title="Sign out" aria-label="Sign out" onClick={onLogout}>
           <svg
             className="nav-item-img"
             viewBox="0 0 24 24"
@@ -44,7 +50,7 @@ export default function NavRail({ section, onNavigate, onOpenProfile, onLogout }
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
-        </div>
+        </button>
       )}
     </nav>
   );

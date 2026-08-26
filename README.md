@@ -25,6 +25,19 @@ npm install
 npm run dev             # http://localhost:5173 (proxies /api to :4000)
 ```
 
+### PyMuPDF (structural PDF export)
+
+Exports of uploaded designs modify the ORIGINAL vector PDF in-place
+(text replacement, logo/cover swaps) using PyMuPDF. Install it once:
+
+```bash
+pip install pymupdf
+```
+
+The server probes for it on boot and logs one line. Without it, exports
+fall back to the Puppeteer template renderer (original layout/fonts are
+NOT preserved in that mode).
+
 ## Notes
 
 - All designs/branding/style samples/static sections and generated proposal

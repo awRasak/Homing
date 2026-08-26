@@ -8,26 +8,41 @@ const CANVAS_SIZES = {
   'linkedin-post': { w: 1200, h: 627, label: 'LinkedIn Post' },
   'facebook-post': { w: 1200, h: 630, label: 'Facebook Post' },
   'youtube-thumb': { w: 1280, h: 720, label: 'YouTube Thumbnail' },
+  'a4-portrait': { w: 793, h: 1123, label: 'A4 Portrait' },
+  'a4-landscape': { w: 1123, h: 793, label: 'A4 Landscape' },
   'custom': { w: 1200, h: 630, label: 'Custom' },
 };
 
 export { CANVAS_SIZES };
 
-export default function DesignCanvas({ canvasJson, onCanvasReady, selectedObject, onObjectSelected, onLayersChanged }) {
+export default function DesignCanvas({ canvasJson, canvasSize: canvasSizeProp, onCanvasReady, selectedObject, onObjectSelected, onLayersChanged }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const fabricRef = useRef(null);
-  const [canvasSize, setCanvasSize] = useState('instagram-post');
+  // The parent passes canvasSize and remounts this component via key={canvasSize}
+  // whenever it changes (e.g. importing an A4 page after starting from an
+  // Instagram-post default) — so the prop only needs to seed the initial
+  // state here, not stay synced via an effect. Previously this state ignored
+  // the prop entirely and always initialized to 'instagram-post', so an
+  // imported page's layers were positioned/scaled for e.g. a 793×1123 A4
+  // canvas but painted onto a stale 1080×1080 square one.
+  const [canvasSize, setCanvasSize] = useState(canvasSizeProp || 'instagram-post');
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
 
   const dims = CANVAS_SIZES[canvasSize];
 
-  // Scale factor to fit canvas in container
+  // Scale factor to fit canvas in container. Measure the scrollable viewport
+  // (.design-canvas-area, our parent) rather than containerRef itself —
+  // containerRef wraps tightly around the canvas element, so its own
+  // clientWidth/clientHeight just mirror the canvas's current (unscaled) size
+  // instead of the actual available space, which made "fit" only account for
+  // width and clip anything near the top/bottom of a tall canvas.
   const getScale = useCallback(() => {
-    if (!containerRef.current) return 0.5;
-    const cw = containerRef.current.clientWidth - 40;
-    const ch = containerRef.current.clientHeight - 40;
+    const viewport = containerRef.current?.parentElement;
+    if (!viewport) return 0.5;
+    const cw = viewport.clientWidth - 40;
+    const ch = viewport.clientHeight - 40;
     return Math.min(cw / dims.w, ch / dims.h, 1);
   }, [dims]);
 

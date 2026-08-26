@@ -148,7 +148,7 @@
   margin-top: 1rem;
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--green-dark);
   font-size: 0.8rem;
   cursor: pointer;
   padding: 0;
@@ -194,6 +194,9 @@
   margin-bottom: 18px;
   flex-shrink: 0;
   cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
 }
 .nav-logo-img {
   width: 100%;
@@ -214,6 +217,15 @@
   color: var(--grey-light);
   font-size: 0.92rem;
   flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+.nav-item:focus-visible,
+.nav-logo:focus-visible {
+  outline: 2px solid var(--green-dark);
+  outline-offset: 2px;
 }
 .nav-item-img {
   width: 30px;
@@ -352,6 +364,7 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  padding: 1.5rem;
 }
 .dash-metrics {
   display: grid;
@@ -6053,7 +6066,7 @@ input.input-main:focus {
   border: 1px solid var(--grey-border);
   border-radius: 6px;
   cursor: pointer;
-  color: var(--accent);
+  color: var(--green-dark);
   font-size: 0.8rem;
   padding: 2px 6px;
   transition: all 0.15s;
@@ -6061,9 +6074,9 @@ input.input-main:focus {
 }
 
 .topic-brief-btn:hover {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
+  background: var(--green);
+  color: var(--green-text);
+  border-color: var(--green);
 }
 
 .topic-brief-btn:disabled {
@@ -6132,16 +6145,16 @@ input.input-main:focus {
   white-space: nowrap;
 }
 .platform-chip:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--green-dark);
+  color: var(--green-dark);
 }
 .platform-chip-active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
+  background: var(--green);
+  color: var(--green-text);
+  border-color: var(--green);
 }
 .platform-chip-active:hover {
-  color: white;
+  color: var(--green-text);
   opacity: 0.9;
 }
 .platform-chip-icon {
@@ -6150,13 +6163,13 @@ input.input-main:focus {
 
 /* ── Extended topic row ── */
 .topic-row-extended {
+  /* Stays a flat, divider-separated row (.topic-row's border-bottom) rather
+     than its own bordered card — a topic-row-extended nested inside the
+     Active/Paused list's own bordered section was a card inside a card. */
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  padding: 10px 12px !important;
-  background: var(--surface);
-  border: 1.5px solid var(--grey-border);
-  border-radius: 12px;
+  padding: 10px 0;
 }
 .topic-row-top,
 .topic-card-head {
@@ -6280,16 +6293,16 @@ input.input-main:focus {
   border: 1px solid var(--grey-border);
   border-radius: 6px;
   cursor: pointer;
-  color: var(--accent);
+  color: var(--green-dark);
   font-size: 0.8rem;
   padding: 2px 6px;
   transition: all 0.15s;
   flex-shrink: 0;
 }
 .topic-scan-btn:hover {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
+  background: var(--green);
+  color: var(--green-text);
+  border-color: var(--green);
 }
 .topic-scan-btn:disabled {
   opacity: 0.4;
@@ -6322,7 +6335,7 @@ input.input-main:focus {
   padding: 0;
 }
 .topic-expand-btn:hover {
-  color: var(--accent);
+  color: var(--green-dark);
 }
 
 /* ── Topic stats grid ── */
@@ -8003,4 +8016,103 @@ input.input-main:focus {
 .rebrand-summary-row.dim {
   font-size: 0.8rem;
   color: var(--grey-mid);
+}
+
+/* ---- Design editor: import page as layers ---- */
+.design-import-picker {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 640px;
+  width: min(90vw, 640px);
+  max-height: 82vh;
+  overflow: auto;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+}
+.design-import-picker h3 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+.design-import-sub {
+  margin: 0 0 16px;
+  font-size: 0.85rem;
+  color: var(--grey-mid);
+}
+.design-import-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+.design-import-thumb {
+  border: 1.5px solid #e4e7ec;
+  border-radius: 10px;
+  background: #fafafa;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.design-import-thumb:hover {
+  border-color: #c8f000;
+  transform: translateY(-2px);
+}
+.design-import-thumb img {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 6px;
+  background: #fff;
+}
+.design-import-thumb span {
+  font-size: 0.75rem;
+  color: var(--grey-mid);
+}
+.design-importing {
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px 32px;
+  font-size: 0.95rem;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+}
+.toolbar-btn-import {
+  font-weight: 600;
+}
+.design-import-back {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--grey-mid);
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.design-import-back:hover { color: #1e211e; }
+.design-import-heading {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--grey-mid);
+  margin: 14px 0 8px;
+}
+.design-import-proposals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.design-import-proposal {
+  border: 1.5px solid #e4e7ec;
+  background: #fafafa;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.design-import-proposal:hover { border-color: #c8f000; }
+.design-import-extracting {
+  font-size: 0.85rem;
+  color: var(--grey-mid);
+  padding: 18px 0;
 }

@@ -19,6 +19,7 @@ function serializeDesign(row) {
     accentColor: row.accent_color,
     backgroundColor: row.background_color || '#ffffff',
     brandColors: JSON.parse(row.brand_colors || '[]'),
+    logoSlots: JSON.parse(row.logo_slots || '[]'),
     logoDataUrl: row.logo_data_url,
     logoVariations: JSON.parse(row.logo_variations || '[]'),
     heroImageDataUrl: row.hero_image_data_url,
@@ -158,6 +159,10 @@ router.put('/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'logoVariations')) {
     sets.push('logo_variations = ?');
     values.push(JSON.stringify(req.body.logoVariations || []));
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'logoSlots')) {
+    sets.push('logo_slots = ?');
+    values.push(JSON.stringify(req.body.logoSlots || []));
   }
   sets.push('updated_at = ?');
   values.push(nowIso());

@@ -58,6 +58,10 @@ function buildPrompt({ design, companyName, notes }) {
   const staticSummary = staticSections
     .map((s) => `- ${s.heading}: ${s.body.slice(0, 300)}`)
     .join('\n');
+  const brandColors = JSON.parse(design.brand_colors || '[]');
+  const brandColorHint = brandColors.length
+    ? `BRAND PALETTE (secondary colors — you may reference them when describing visuals/design touches, do not force it): ${brandColors.join(', ')}. Accent color: ${design.accent_color}.`
+    : '';
 
   return `You are ghostwriting a tailored B2B proposal on behalf of ${design.sender_name || 'the sender'}.
 
@@ -68,7 +72,7 @@ ${design.style_sample || '(no style sample provided; use a confident, warm, conc
 
 STATIC SECTIONS THAT ALREADY APPEAR ELSEWHERE IN THE DOCUMENT (do not duplicate this content in your output; the recipient will see it separately):
 ${staticSummary || '(none provided)'}
-
+${brandColorHint ? `\n${brandColorHint}\n` : ''}
 ${design.detected_headline ? `STRUCTURAL HINT — the original design's headline pattern was: "${design.detected_headline}". Follow a similar structural rhythm for the new headline, but tailor it to the recipient.` : ''}
 
 RECIPIENT: ${companyName}

@@ -79,6 +79,7 @@ export default function EditorCanvas({
   providers,
   activeProvider,
   onGenerate,
+  onRebrand,
   recentCompanies,
   currentProposal,
   handleExport,
@@ -282,11 +283,18 @@ export default function EditorCanvas({
       </div>
 
       {/* Proposal actions */}
-      {currentProposal && (
+      {(currentProposal || onRebrand) && (
         <div className="proposal-actions no-print">
-          <button type="button" className="btn-secondary" onClick={handleExport}>
-            Download PDF
-          </button>
+          {currentProposal && (
+            <button type="button" className="btn-secondary" onClick={handleExport}>
+              Download PDF
+            </button>
+          )}
+          {onRebrand && (activeDesign?.pages?.length > 0 || activeDesign?.sourceTextBlocks?.length > 0) && (
+            <button type="button" className="btn-secondary" onClick={onRebrand} title="Swap the recipient name and logo throughout">
+              Rebrand for another company
+            </button>
+          )}
         </div>
       )}
 

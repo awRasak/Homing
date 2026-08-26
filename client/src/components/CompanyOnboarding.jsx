@@ -60,6 +60,7 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
   const [featIndex, setFeatIndex] = useState(0);
   const [scannedFrom, setScannedFrom] = useState('');
   const [scannedRegion, setScannedRegion] = useState('');
+  const [scannedCategory, setScannedCategory] = useState('');
   const [settingUpListening, setSettingUpListening] = useState(false);
   const [listeningProgress, setListeningProgress] = useState('');
   const [listeningComplete, setListeningComplete] = useState(false);
@@ -97,6 +98,7 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
       applyProfile(result.profile);
       setScannedFrom(result.scanned_pages > 1 ? `${result.scanned_pages} pages read` : 'homepage read');
       setScannedRegion(result.region || '');
+      setScannedCategory(result.profile?.category || '');
       setScanProgress(100);
       // let the 100% bar register before moving on
       setTimeout(() => { setScanning(false); setStep(1); }, 700);
@@ -312,7 +314,7 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
 
           {(step === 1 || step === 2 || step === 3) && scannedFrom && (
             <div className="ob-autofill-note">
-              ✦ Auto-filled from {host} ({scannedFrom}{scannedRegion ? ` · context: ${scannedRegion}` : ''}) — edit anything that's off, and check the other steps too.
+              ✦ Auto-filled from {host} ({scannedFrom}{scannedCategory ? ` · category: ${scannedCategory}` : ''}{scannedRegion ? ` · context: ${scannedRegion}` : ''}) — edit anything that's off, and check the other steps too.
             </div>
           )}
 

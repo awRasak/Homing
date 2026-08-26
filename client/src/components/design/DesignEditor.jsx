@@ -4,11 +4,15 @@ import DesignCanvas, { CANVAS_SIZES } from './DesignCanvas';
 import LayerPanel from './LayerPanel';
 import AIGeneratePanel from './AIGeneratePanel';
 import DesignToolbar from './DesignToolbar';
+import { buildLayersFromPage, pickPresetForPage } from '../../lib/designImport';
+import { renderAllPages } from '../../lib/pdfExtract';
+import { api } from '../../api';
 
-export default function DesignEditor() {
+export default function DesignEditor({ design }) {
   const fabricRef = useRef(null);
   const idCounter = useRef(0);
   const [canvasSize, setCanvasSize] = useState('instagram-post');
+  const [canvasVersion, setCanvasVersion] = useState(0);
   const [layers, setLayers] = useState([]);
   const [selectedObj, setSelectedObj] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -16,8 +20,15 @@ export default function DesignEditor() {
   const [zoom, setZoom] = useState(1);
   const [commandInput, setCommandInput] = useState('');
   const [commandHistory, setCommandHistory] = useState([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null); // { page, replace }
+  const [proposals, setProposals] = useState([]);
+  const [proposalPages, setProposalPages] = useState(null); // { name, pages }
+  const [extracting, setExtracting] = useState(false);
 
   const dims = CANVAS_SIZES[canvasSize];
+  const importablePages = design?.pages?.length ? design.pages : null;
 
   const genId = useCallback(() => {
     return `obj_${++idCounter.current}_${Date.now()}`;
@@ -39,6 +50,7 @@ export default function DesignEditor() {
   const handleCanvasReady = useCallback((fc) => {
     fabricRef.current = fc;
     setZoom(fc.getZoom());
+    setCanvasVersion((v) => v + 1);
   }, []);
 
   const handleObjectSelected = useCallback((obj) => {
@@ -261,6 +273,80 @@ export default function DesignEditor() {
     setZoom(scale);
   }, [dims]);
 
+  const handleOpenImport = useCallback(() => {
+    setProposalPages(null);
+    setImportOpen(true);
+    api.listAllProposals()
+      .then((rows) => setProposals(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  }, []);
+
+  const handlePickProposal = useCallback(async (p) => {
+    setExtracting(true);
+    try {
+      const blob = await api.downloadProposalPdf(p.id);
+      const file = new File([blob], 'proposal.pdf', { type: 'application/pdf' });
+      const pages = await renderAllPages(file);
+      const usable = pages.filter((pg) => pg.blocks?.length || pg.images?.length);
+      if (!usable.length) throw new Error('no pages');
+      setProposalPages({
+        name: p.companyName || p.name || `Proposal ${p.id?.slice(0, 6) || ''}`,
+        pages: usable,
+      });
+    } catch (err) {
+      console.error('Proposal extraction failed', err);
+      window.alert('Could not read that proposal PDF. Try again in a moment.');
+    } finally {
+      setExtracting(false);
+    }
+  }, []);
+
+  const handleImportPage = useCallback((page) => {
+    const fc = fabricRef.current;
+    if (fc && fc.getObjects().length > 0) {
+      if (!window.confirm('The canvas already has layers. Replace them with this page?')) return;
+    }
+    setImportOpen(false);
+    setImporting(true);
+    setPendingImport({ page, replace: true, preset: pickPresetForPage(page) });
+    setCanvasSize(pickPresetForPage(page));
+  }, []);
+
+  // Runs after the canvas has been recreated for the imported page's aspect
+  // ratio (DesignCanvas is keyed by canvasSize).
+  useEffect(() => {
+    if (!pendingImport || !fabricRef.current) return;
+    const fc = fabricRef.current;
+    let cancelled = false;
+    (async () => {
+      try {
+        const targetW = CANVAS_SIZES[pendingImport.preset]?.w || dims.w;
+        const objects = await buildLayersFromPage(pendingImport.page, {
+          targetW,
+          headlineFont: design?.headlineFont || 'Poppins',
+          bodyFont: design?.bodyFont || 'Inter',
+          genId,
+        });
+        if (cancelled || fabricRef.current !== fc) return;
+        fc.clear();
+        fc.backgroundColor = '#ffffff';
+        for (const obj of objects) fc.add(obj);
+        fc.renderAll();
+        refreshLayers();
+      } catch (err) {
+        console.error('Layer import failed', err);
+        window.alert('Could not convert that page into editable layers.');
+      } finally {
+        if (!cancelled) {
+          setImporting(false);
+          setPendingImport(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasVersion, pendingImport]);
+
   const downloadFile = useCallback((data, filename) => {
     const link = document.createElement('a');
     link.download = filename;
@@ -393,6 +479,8 @@ export default function DesignEditor() {
         onAddRect={addRect}
         onAddCircle={addCircle}
         onAddImage={addImage}
+        onImportLayers={handleOpenImport}
+        canImportLayers={!importing && !extracting}
         onDelete={() => selectedObj && handleDeleteLayer(selectedObj._id)}
         onUndo={() => {}}
         onRedo={() => {}}
@@ -457,6 +545,69 @@ export default function DesignEditor() {
           disabled={!commandInput.trim()}
         >↑</button>
       </div>
+      {importOpen && (
+        <div className="modal-overlay" onClick={() => setImportOpen(false)}>
+          <div className="design-import-picker" onClick={(e) => e.stopPropagation()}>
+            {proposalPages ? (
+              <>
+                <button type="button" className="design-import-back" onClick={() => setProposalPages(null)}>← Choose a different source</button>
+                <h3>Import page as layers</h3>
+                <p className="design-import-sub">
+                  Pages extracted from “{proposalPages.name}” — text, images and
+                  shapes become editable layers on top of the original.
+                </p>
+                <div className="design-import-grid">
+                  {proposalPages.pages.map((p, i) => (
+                    <button key={i} type="button" className="design-import-thumb" onClick={() => handleImportPage(p)}>
+                      <img src={p.dataUrl} alt={`Page ${i + 1}`} />
+                      <span>Page {i + 1}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Import page as layers</h3>
+                <p className="design-import-sub">
+                  Pick a page to convert — text, images and shapes become editable
+                  layers on top of the original.
+                </p>
+                {extracting && <div className="design-import-extracting">Reading PDF…</div>}
+                {!extracting && importablePages && (
+                  <>
+                    <div className="design-import-heading">Your design</div>
+                    <div className="design-import-grid">
+                      {importablePages.map((p, i) => (
+                        <button key={i} type="button" className="design-import-thumb" onClick={() => handleImportPage(p)}>
+                          <img src={p.dataUrl} alt={`Page ${i + 1}`} />
+                          <span>Page {i + 1}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {!extracting && proposals.length > 0 && (
+                  <>
+                    <div className="design-import-heading">From a proposal</div>
+                    <div className="design-import-proposals">
+                      {proposals.map((p) => (
+                        <button key={p.id} type="button" className="design-import-proposal" onClick={() => handlePickProposal(p)}>
+                          {p.companyName || p.name || `Proposal ${String(p.id).slice(0, 6)}`}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {importing && (
+        <div className="modal-overlay">
+          <div className="design-importing">Converting to layers…</div>
+        </div>
+      )}
     </div>
   );
 }
