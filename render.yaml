@@ -5,11 +5,11 @@ services:
     rootDir: server
     buildCommand: npm install
     startCommand: node src/index.js
-    plan: starter
-    disk:
-      name: homing-data
-      mountPath: /opt/render/project/src/server/data
-      sizeGB: 1
+    plan: free
+    # Free persistence via R2 — set these in Render dashboard to keep DB across deploys
+    # Without them, data is ephemeral (wiped on deploy). With them, homing.db is
+    # restored from R2 on boot and backed up every 5 min. Alternative: pay $7/mo
+    # Starter + add disk: mountPath /opt/render/project/src/server/data sizeGB 1
     envVars:
       - key: GROQ_API_KEY
         sync: false
@@ -25,3 +25,13 @@ services:
         sync: false
       - key: TWITTER_BEARER_TOKEN
         sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_REGION
+        value: auto

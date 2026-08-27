@@ -2,11 +2,60 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync, createReadStream, createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '..', 'data', 'homing.db');
 mkdirSync(path.dirname(dbPath), { recursive: true });
+
+// ── Free-tier persistence: optional S3/R2 backup ──
+// Set R2_BUCKET + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY + R2_ENDPOINT (or AWS_*)
+// If set, DB file is restored from remote on boot and uploaded every 5 min.
+// This keeps the sync `node:sqlite` API with zero refactor.
+let s3 = null;
+let bucket = process.env.R2_BUCKET || process.env.S3_BUCKET || '';
+let r2Endpoint = process.env.R2_ENDPOINT || process.env.S3_ENDPOINT || '';
+if (bucket && process.env.R2_ACCESS_KEY_ID) {
+  try {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    s3 = new S3Client({
+      region: process.env.R2_REGION || 'auto',
+      endpoint: r2Endpoint || undefined,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+      },
+      forcePathStyle: !!r2Endpoint,
+    });
+    // Restore: if local DB missing but remote exists, download it
+    if (!existsSync(dbPath)) {
+      try {
+        const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+        const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: 'homing.db' }));
+        if (res.Body) {
+          await pipeline(res.Body, createWriteStream(dbPath));
+          console.log('[DB] Restored homing.db from R2');
+        }
+      } catch (e) {
+        if (e.Name !== 'NoSuchKey') console.warn('[DB] R2 restore skip:', e.message);
+      }
+    }
+    // Periodic backup every 5 min + on exit
+    const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+    async function backup() {
+      if (!existsSync(dbPath)) return;
+      try {
+        await s3.send(new PutObjectCommand({ Bucket: bucket, Key: 'homing.db', Body: createReadStream(dbPath) }));
+      } catch (e) { console.warn('[DB] R2 backup failed:', e.message); }
+    }
+    setInterval(backup, 5 * 60 * 1000);
+    process.on('SIGTERM', () => { backup().finally(() => process.exit(0)); });
+    console.log('[DB] R2 backup enabled →', bucket);
+  } catch (e) {
+    console.warn('[DB] R2 init failed:', e.message);
+  }
+}
 
 export const db = new DatabaseSync(dbPath);
 db.exec('PRAGMA journal_mode = WAL');
@@ -71,6 +120,7 @@ try {
     ["brand_colors", "TEXT NOT NULL DEFAULT '[]'"],
     ["logo_variations", "TEXT NOT NULL DEFAULT '[]'"],
     ["logo_slots", "TEXT NOT NULL DEFAULT '[]'"],
+    ["canvas_json", "TEXT"],
   ];
   for (const [name, def] of newColumns) {
     if (!existingColumns.has(name)) {
@@ -437,6 +487,42 @@ try {
 } catch (e) {
   console.warn('[DB] Skipping becca_topics platforms migration:', e.message);
 }
+
+// Buffer autopilot — tracks posts scheduled through Buffer
+db.exec(`
+CREATE TABLE IF NOT EXISTS buffer_scheduled_posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  buffer_post_id TEXT,
+  proposal_id TEXT,
+  channel_id TEXT NOT NULL,
+  channel_name TEXT NOT NULL DEFAULT '',
+  service TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL DEFAULT '',
+  image_url TEXT,
+  scheduled_at TEXT,
+  created_at TEXT NOT NULL
+);
+`);
+
+try {
+  const bufferColumns = new Set(db.prepare('PRAGMA table_info(buffer_scheduled_posts)').all().map((c) => c.name));
+  if (!bufferColumns.has('image_url')) {
+    db.exec(`ALTER TABLE buffer_scheduled_posts ADD COLUMN image_url TEXT`);
+  }
+} catch (e) {
+  console.warn('[DB] Skipping buffer_scheduled_posts migration:', e.message);
+}
+
+// Composited social-post images (client-side template renders) — stored as
+// base64 so Buffer has a stable URL to fetch at send time, since Render's
+// filesystem is ephemeral between requests.
+db.exec(`
+CREATE TABLE IF NOT EXISTS social_assets (
+  id TEXT PRIMARY KEY,
+  data_base64 TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`);
 
 export function nowIso() {
   return new Date().toISOString();
