@@ -1162,7 +1162,12 @@ function buildKnowledgeBase(ws) {
   const settingsRow = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'daily'").get(ws);
   let dailySettings = {};
   try { dailySettings = settingsRow ? JSON.parse(settingsRow.value) : {}; } catch {}
-  const region = dailySettings.country || profile?.location || '';
+  let region = dailySettings.country || profile?.location || '';
+  // Backfill: onboarding previously detected NG but never persisted — infer from NG-specific topics
+  if (!region) {
+    const hay = [...topics.map(t => `${t.name} ${t.context||''}`), profile?.company_name||'', profile?.company_description||''].join(' ').toLowerCase();
+    if (/nigeria|lagos|abuja|dealer plate|motoka|frsc|naira|tincan|ajegunle/i.test(hay)) region = 'Nigeria';
+  }
 
   // Personal block
   let personalBlock = '';

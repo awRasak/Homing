@@ -155,7 +155,12 @@ export default function CompanyOnboarding({ onSave, onComplete, onClose }) {
         target_market: targetMarket,
         value_proposition: valueProposition,
         industries,
+        location: scannedRegion || '',
       });
+      // Persist NG scoping to Briefings settings so every search/briefing is scoped
+      if (scannedRegion) {
+        try { await api.becca.saveSettings('daily', { country: scannedRegion }); } catch {}
+      }
 
       // Now auto-create watchlist topics from wizard data
       setSettingUpListening(true);
