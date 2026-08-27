@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import * as fabric from 'fabric';
+import { ZoomIn, ZoomOut, Maximize2, Plus, Copy, Trash2 } from 'lucide-react';
 import DesignCanvas, { CANVAS_SIZES } from './DesignCanvas';
 import LayerPanel from './LayerPanel';
 import AIGeneratePanel from './AIGeneratePanel';
@@ -8,11 +9,23 @@ import { buildLayersFromPage, pickPresetForPage } from '../../lib/designImport';
 import { renderAllPages } from '../../lib/pdfExtract';
 import { api } from '../../api';
 
-export default function DesignEditor({ design }) {
+// Reverse-lookup a CANVAS_SIZES key from a saved canvas's own width/height,
+// so reloading a template restores its real size instead of resetting to the
+// 'instagram-post' default and mis-scaling every saved object.
+function presetForDimensions(w, h) {
+  const key = Object.keys(CANVAS_SIZES).find((k) => CANVAS_SIZES[k].w === w && CANVAS_SIZES[k].h === h);
+  return key || 'instagram-post';
+}
+
+export default function DesignEditor({ design, onPatch }) {
   const fabricRef = useRef(null);
   const idCounter = useRef(0);
-  const [canvasSize, setCanvasSize] = useState('instagram-post');
+  const [canvasSize, setCanvasSize] = useState(() => (
+    design?.canvasJson ? presetForDimensions(design.canvasJson.width, design.canvasJson.height) : 'instagram-post'
+  ));
   const [canvasVersion, setCanvasVersion] = useState(0);
+  const [socialTemplateId, setSocialTemplateId] = useState(null);
+  const saveCanvasTimer = useRef(null);
   const [layers, setLayers] = useState([]);
   const [selectedObj, setSelectedObj] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -26,9 +39,18 @@ export default function DesignEditor({ design }) {
   const [proposals, setProposals] = useState([]);
   const [proposalPages, setProposalPages] = useState(null); // { name, pages }
   const [extracting, setExtracting] = useState(false);
+  // Canva-style pages / frames
+  const [pages, setPages] = useState(() => {
+    if (design?.canvasJson?.pages && Array.isArray(design.canvasJson.pages)) {
+      return design.canvasJson.pages;
+    }
+    return [{ id: 'page-1', json: design?.canvasJson || null, name: 'Page 1' }];
+  });
+  const [activePageIdx, setActivePageIdx] = useState(0);
 
   const dims = CANVAS_SIZES[canvasSize];
   const importablePages = design?.pages?.length ? design.pages : null;
+  const imageInputRef = useRef(null);
 
   const genId = useCallback(() => {
     return `obj_${++idCounter.current}_${Date.now()}`;
@@ -52,6 +74,50 @@ export default function DesignEditor({ design }) {
     setZoom(fc.getZoom());
     setCanvasVersion((v) => v + 1);
   }, []);
+
+  // Debounce-persist the canvas so reopening Design (or reloading the app)
+  // restores what was there, and so a template marked via "Use as social
+  // template" is actually available for the compositor to read later.
+  const scheduleSaveCanvas = useCallback(() => {
+    if (!design?.id || !onPatch) return;
+    clearTimeout(saveCanvasTimer.current);
+    saveCanvasTimer.current = setTimeout(() => {
+      const fc = fabricRef.current;
+      if (!fc) return;
+      const json = fc.toObject(['_id', 'name', '_role']);
+      if (pages.length > 1) {
+        setPages((prev) => {
+          const next = [...prev];
+          if (next[activePageIdx]) next[activePageIdx] = { ...next[activePageIdx], json };
+          onPatch(design.id, { canvasJson: { pages: next, activeIdx: activePageIdx } });
+          return next;
+        });
+      } else {
+        onPatch(design.id, { canvasJson: json });
+      }
+    }, 800);
+  }, [design?.id, onPatch, pages.length, activePageIdx]);
+
+  const handleLayersChanged = useCallback(() => {
+    refreshLayers();
+    scheduleSaveCanvas();
+  }, [refreshLayers, scheduleSaveCanvas]);
+
+  // Which design (if any) is currently the reusable social-post template.
+  useEffect(() => {
+    api.becca.getSocialTemplate()
+      .then((s) => setSocialTemplateId(s?.designId || null))
+      .catch(() => {});
+  }, []);
+
+  const isSocialTemplate = !!design?.id && design.id === socialTemplateId;
+  const handleSetSocialTemplate = useCallback(() => {
+    if (!design?.id) return;
+    const nextId = isSocialTemplate ? null : design.id;
+    api.becca.setSocialTemplate(nextId)
+      .then(() => setSocialTemplateId(nextId))
+      .catch((err) => window.alert(err.message || 'Failed to update social template'));
+  }, [design?.id, isSocialTemplate]);
 
   const handleObjectSelected = useCallback((obj) => {
     setSelectedObj(obj);
@@ -107,9 +173,38 @@ export default function DesignEditor({ design }) {
     fc.renderAll();
   }, [genId]);
 
-  const addImage = useCallback(() => {
+  const addImageFromFile = useCallback(async (file) => {
     const fc = fabricRef.current;
-    if (!fc) return;
+    if (!fc || !file) return;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    try {
+      const img = await fabric.FabricImage.fromURL(dataUrl);
+      img.set({ _id: genId(), name: file.name || 'Image' });
+      const maxW = dims.w * 0.6;
+      const maxH = dims.h * 0.6;
+      const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+      img.scaleX = scale;
+      img.scaleY = scale;
+      fc.add(img);
+      fc.centerObject(img);
+      fc.setActiveObject(img);
+      fc.renderAll();
+    } catch {
+      window.alert('Failed to load that image.');
+    }
+  }, [dims, genId]);
+
+  const addImage = useCallback(() => {
+    // Prefer file picker; fallback to URL prompt if no file chosen
+    if (imageInputRef.current) {
+      imageInputRef.current.click();
+      return;
+    }
     const url = window.prompt('Enter image URL:');
     if (!url) return;
     fabric.FabricImage.fromURL(url)
@@ -117,9 +212,9 @@ export default function DesignEditor({ design }) {
         img.set({ _id: genId(), name: 'Image' });
         const maxW = dims.w * 0.6;
         const maxH = dims.h * 0.6;
-        const scale = Math.min(maxW / img.width, maxH / img.height);
-        img.scaleToWidth(maxW);
-        if (img.scaleY > scale) img.scaleToHeight(maxH);
+        const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+        img.scaleX = scale;
+        img.scaleY = scale;
         fc.add(img);
         fc.centerObject(img);
         fc.setActiveObject(img);
@@ -136,7 +231,8 @@ export default function DesignEditor({ design }) {
     fc.moveTo(obj, toIdx);
     fc.renderAll();
     refreshLayers();
-  }, [refreshLayers]);
+    scheduleSaveCanvas();
+  }, [refreshLayers, scheduleSaveCanvas]);
 
   const handleDeleteLayer = useCallback((id) => {
     const fc = fabricRef.current;
@@ -173,7 +269,8 @@ export default function DesignEditor({ design }) {
     obj.set('visible', !obj.visible);
     fc.renderAll();
     refreshLayers();
-  }, [refreshLayers]);
+    scheduleSaveCanvas();
+  }, [refreshLayers, scheduleSaveCanvas]);
 
   const handleToggleLock = useCallback((id) => {
     const fc = fabricRef.current;
@@ -187,7 +284,8 @@ export default function DesignEditor({ design }) {
     if (!obj.selectable && fc.getActiveObject() === obj) fc.discardActiveObject();
     fc.renderAll();
     refreshLayers();
-  }, [refreshLayers]);
+    scheduleSaveCanvas();
+  }, [refreshLayers, scheduleSaveCanvas]);
 
   const handleSelectLayer = useCallback((id) => {
     const fc = fabricRef.current;
@@ -207,19 +305,33 @@ export default function DesignEditor({ design }) {
     obj.setCoords();
     fc.renderAll();
     refreshLayers();
+    scheduleSaveCanvas();
     setSelectedObj((prev) => (prev && prev._id === id ? { ...prev, ...props } : prev));
-  }, [refreshLayers]);
+  }, [refreshLayers, scheduleSaveCanvas]);
 
   const handleGenerate = useCallback(async (prompt, negative) => {
     const fc = fabricRef.current;
     if (!fc || !prompt.trim()) return;
+    // Handle solid-color background requests locally — no need to call the image model
+    const bgMatch = prompt.trim().match(/^(?:i want a |background\s*)?(#[0-9a-fA-F]{3,8})\s*(background)?$/i);
+    if (bgMatch) {
+      fc.backgroundColor = bgMatch[1];
+      fc.renderAll();
+      refreshLayers();
+      return;
+    }
     setGenerating(true);
     let blobUrl = null;
     try {
       let fullPrompt = prompt.trim();
       if (negative && negative.trim()) fullPrompt += `, avoid: ${negative.trim()}`;
-      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?model=flux&width=${dims.w}&height=${dims.h}&nologo=true&seed=${Math.floor(Math.random() * 2147483647)}`;
-      const res = await fetch(url);
+      const seed = Math.floor(Math.random() * 2147483647);
+      const base = `https://image.pollinations.ai/prompt/${encodeURIComponent(fullPrompt)}?width=${dims.w}&height=${dims.h}&nologo=true&seed=${seed}`;
+      let res = await fetch(`${base}&model=turbo`);
+      if (res.status === 403) {
+        // flux is intermittently 403 behind Cloudflare — turbo is the free fallback
+        res = await fetch(`${base}&model=flux`);
+      }
       if (!res.ok) throw new Error(`Generation failed (${res.status})`);
       const blob = await res.blob();
       blobUrl = URL.createObjectURL(blob);
@@ -246,30 +358,40 @@ export default function DesignEditor({ design }) {
   const handleZoomIn = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    const center = fc.getCenterPoint();
-    fc.zoomToPoint(center, Math.min(fc.getZoom() * 1.2, 5));
-    setZoom(fc.getZoom());
-  }, []);
+    const next = Math.min(fc.getZoom() * 1.2, 5);
+    // Canva-style: scale the frame itself so the white page grows/shrinks
+    fc.setZoom(next);
+    fc.setWidth(dims.w * next);
+    fc.setHeight(dims.h * next);
+    fc.setViewportTransform([next, 0, 0, next, 0, 0]);
+    fc.requestRenderAll();
+    setZoom(next);
+  }, [dims]);
 
   const handleZoomOut = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    const center = fc.getCenterPoint();
-    fc.zoomToPoint(center, Math.max(fc.getZoom() / 1.2, 0.05));
-    setZoom(fc.getZoom());
-  }, []);
+    const next = Math.max(fc.getZoom() / 1.2, 0.05);
+    fc.setZoom(next);
+    fc.setWidth(dims.w * next);
+    fc.setHeight(dims.h * next);
+    fc.setViewportTransform([next, 0, 0, next, 0, 0]);
+    fc.requestRenderAll();
+    setZoom(next);
+  }, [dims]);
 
   const handleZoomFit = useCallback(() => {
     const fc = fabricRef.current;
-    const container = fc?.lowerCanvasEl?.parentElement?.parentElement;
     if (!fc) return;
-    const cw = container ? container.clientWidth - 40 : dims.w;
-    const ch = container ? container.clientHeight - 40 : dims.h;
+    const area = fc.lowerCanvasEl?.parentElement?.parentElement || fc.upperCanvasEl?.parentElement?.parentElement;
+    const cw = area ? area.clientWidth - 40 : dims.w;
+    const ch = area ? area.clientHeight - 40 : dims.h;
     const scale = Math.min(cw / dims.w, ch / dims.h, 1);
+    // Reset pan and zoom to fit
     fc.setViewportTransform([scale, 0, 0, scale, 0, 0]);
     fc.setWidth(dims.w * scale);
     fc.setHeight(dims.h * scale);
-    fc.renderAll();
+    fc.requestRenderAll();
     setZoom(scale);
   }, [dims]);
 
@@ -287,7 +409,8 @@ export default function DesignEditor({ design }) {
       const blob = await api.downloadProposalPdf(p.id);
       const file = new File([blob], 'proposal.pdf', { type: 'application/pdf' });
       const pages = await renderAllPages(file);
-      const usable = pages.filter((pg) => pg.blocks?.length || pg.images?.length);
+      // Keep pages that have any visual content (dataUrl always present after render)
+      const usable = pages.filter((pg) => pg.dataUrl);
       if (!usable.length) throw new Error('no pages');
       setProposalPages({
         name: p.companyName || p.name || `Proposal ${p.id?.slice(0, 6) || ''}`,
@@ -378,7 +501,8 @@ export default function DesignEditor({ design }) {
     fc.backgroundColor = '#ffffff';
     fc.renderAll();
     refreshLayers();
-  }, [refreshLayers]);
+    scheduleSaveCanvas();
+  }, [refreshLayers, scheduleSaveCanvas]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -410,6 +534,124 @@ export default function DesignEditor({ design }) {
     setCanvasSize(size);
   }, []);
 
+  // Canva-style pages: save current canvas before switching, load target page
+  const saveCurrentPageSilently = useCallback(() => {
+    const fc = fabricRef.current;
+    if (!fc || pages.length === 0) return;
+    try {
+      const json = fc.toObject(['_id', 'name', '_role']);
+      setPages((prev) => {
+        const next = [...prev];
+        if (next[activePageIdx]) next[activePageIdx] = { ...next[activePageIdx], json };
+        return next;
+      });
+    } catch {}
+  }, [activePageIdx, pages.length]);
+
+  const handleAddPage = useCallback(() => {
+    const fc = fabricRef.current;
+    if (fc) {
+      try {
+        const json = fc.toObject(['_id', 'name', '_role']);
+        setPages((prev) => {
+          const next = [...prev];
+          if (next[activePageIdx]) next[activePageIdx] = { ...next[activePageIdx], json };
+          const newPage = { id: `page-${Date.now()}`, json: null, name: `Page ${next.length + 1}` };
+          const updated = [...next, newPage];
+          if (onPatch && design?.id && updated.length > 1) {
+            onPatch(design.id, { canvasJson: { pages: updated, activeIdx: updated.length - 1 } });
+          }
+          return updated;
+        });
+      } catch {}
+    }
+    setActivePageIdx((prev) => prev + 1);
+    // Clear canvas for new blank page after a tick so Fabric is ready
+    setTimeout(() => {
+      const fc2 = fabricRef.current;
+      if (fc2) {
+        fc2.clear();
+        fc2.backgroundColor = '#ffffff';
+        fc2.renderAll();
+        refreshLayers();
+      }
+    }, 50);
+  }, [activePageIdx, design?.id, onPatch, refreshLayers]);
+
+  const handleSwitchPage = useCallback(async (idx) => {
+    if (idx === activePageIdx) return;
+    const fc = fabricRef.current;
+    if (!fc) return;
+    // Save current
+    try {
+      const json = fc.toObject(['_id', 'name', '_role']);
+      setPages((prev) => {
+        const next = [...prev];
+        if (next[activePageIdx]) next[activePageIdx] = { ...next[activePageIdx], json };
+        return next;
+      });
+    } catch {}
+    setActivePageIdx(idx);
+    const target = pages[idx];
+    fc.clear();
+    fc.backgroundColor = '#ffffff';
+    if (target?.json) {
+      try {
+        await fc.loadFromJSON(target.json);
+        fc.renderAll();
+      } catch (err) {
+        console.error('Failed to load page', err);
+      }
+    }
+    fc.renderAll();
+    refreshLayers();
+    if (onPatch && design?.id && pages.length > 1) {
+      onPatch(design.id, { canvasJson: { pages, activeIdx: idx } });
+    }
+  }, [activePageIdx, pages, design?.id, onPatch, refreshLayers]);
+
+  const handleDuplicatePage = useCallback((idx) => {
+    const fc = fabricRef.current;
+    if (fc && idx === activePageIdx) {
+      try {
+        const json = fc.toObject(['_id', 'name', '_role']);
+        setPages((prev) => {
+          const next = [...prev];
+          next[idx] = { ...next[idx], json };
+          const dup = { id: `page-${Date.now()}`, json, name: `${next[idx].name} copy` };
+          const updated = [...next.slice(0, idx + 1), dup, ...next.slice(idx + 1)];
+          return updated;
+        });
+        setActivePageIdx(idx + 1);
+      } catch {}
+    } else {
+      setPages((prev) => {
+        const dup = { ...prev[idx], id: `page-${Date.now()}`, name: `${prev[idx].name} copy` };
+        return [...prev.slice(0, idx + 1), dup, ...prev.slice(idx + 1)];
+      });
+    }
+  }, [activePageIdx]);
+
+  const handleDeletePage = useCallback((idx) => {
+    if (pages.length <= 1) {
+      // Single page: just clear
+      const fc = fabricRef.current;
+      if (fc) {
+        fc.clear();
+        fc.backgroundColor = '#ffffff';
+        fc.renderAll();
+        refreshLayers();
+      }
+      return;
+    }
+    setPages((prev) => prev.filter((_, i) => i !== idx));
+    if (activePageIdx >= idx && activePageIdx > 0) {
+      setActivePageIdx(activePageIdx - 1);
+    } else if (activePageIdx >= pages.length - 1) {
+      setActivePageIdx(pages.length - 2);
+    }
+  }, [pages.length, activePageIdx, refreshLayers]);
+
   function handleCommand(text) {
     const fc = fabricRef.current;
     if (!fc || !text.trim()) return;
@@ -436,6 +678,7 @@ export default function DesignEditor({ design }) {
       fc.backgroundColor = '#ffffff';
       fc.renderAll();
       refreshLayers();
+      scheduleSaveCanvas();
       replies.push('Canvas cleared.');
     } else if (cmd.startsWith('resize ')) {
       const parts = cmd.replace('resize', '').trim().split(/x|\s/);
@@ -490,21 +733,78 @@ export default function DesignEditor({ design }) {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomFit={handleZoomFit}
+        isSocialTemplate={isSocialTemplate}
+        onSetSocialTemplate={design?.id ? handleSetSocialTemplate : null}
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) addImageFromFile(f);
+          e.target.value = '';
+        }}
       />
       <div className="design-main">
+        <div className="design-pages-strip">
+          {pages.map((p, idx) => (
+            <div
+              key={p.id}
+              className={`design-page-thumb ${activePageIdx === idx ? 'active' : ''}`}
+              onClick={() => handleSwitchPage(idx)}
+            >
+              <div className="page-thumb-preview">
+                <span className="page-number">{idx + 1}</span>
+                <span className="page-thumb-label">{p.name}</span>
+              </div>
+              <div className="page-thumb-actions">
+                <button
+                  type="button"
+                  className="page-thumb-btn"
+                  onClick={(e) => { e.stopPropagation(); handleDuplicatePage(idx); }}
+                  title="Duplicate page"
+                >
+                  <Copy size={12} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className="page-thumb-btn page-thumb-btn-delete"
+                  onClick={(e) => { e.stopPropagation(); handleDeletePage(idx); }}
+                  title="Delete page"
+                >
+                  <Trash2 size={12} strokeWidth={1.8} />
+                </button>
+              </div>
+            </div>
+          ))}
+          <button type="button" className="design-add-page-btn" onClick={handleAddPage}>
+            <Plus size={14} strokeWidth={1.8} />
+            <span>Add page</span>
+          </button>
+        </div>
         <div className="design-canvas-area">
           <DesignCanvas
             key={canvasSize}
             canvasSize={canvasSize}
+            canvasJson={pages[activePageIdx]?.json}
             onCanvasReady={handleCanvasReady}
             onObjectSelected={handleObjectSelected}
-            onLayersChanged={refreshLayers}
+            onLayersChanged={handleLayersChanged}
+            onZoomChange={setZoom}
           />
           <div className="design-zoom-controls">
-            <button type="button" className="design-zoom-btn" onClick={handleZoomIn} title="Zoom in">+</button>
+            <button type="button" className="design-zoom-btn" onClick={handleZoomIn} title="Zoom in">
+              <ZoomIn size={16} strokeWidth={1.8} />
+            </button>
             <span className="design-zoom-level">{Math.round(zoom * 100)}%</span>
-            <button type="button" className="design-zoom-btn" onClick={handleZoomOut} title="Zoom out">−</button>
-            <button type="button" className="design-zoom-btn" onClick={handleZoomFit} title="Fit to screen">⊞</button>
+            <button type="button" className="design-zoom-btn" onClick={handleZoomOut} title="Zoom out">
+              <ZoomOut size={16} strokeWidth={1.8} />
+            </button>
+            <button type="button" className="design-zoom-btn" onClick={handleZoomFit} title="Fit to screen">
+              <Maximize2 size={16} strokeWidth={1.8} />
+            </button>
           </div>
         </div>
         <div className="design-sidebar">
@@ -570,9 +870,42 @@ export default function DesignEditor({ design }) {
                 <h3>Import page as layers</h3>
                 <p className="design-import-sub">
                   Pick a page to convert — text, images and shapes become editable
-                  layers on top of the original.
+                  layers on top of the original. Or upload an image/PDF to split into layers.
                 </p>
                 {extracting && <div className="design-import-extracting">Reading PDF…</div>}
+                {!extracting && (
+                  <div className="design-import-upload">
+                    <label className="design-import-upload-btn">
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          setExtracting(true);
+                          try {
+                            const pgs = await renderAllPages(f);
+                            const usable = pgs.filter((pg) => pg.dataUrl);
+                            if (!usable.length) throw new Error('no pages');
+                            if (usable.length === 1) {
+                              handleImportPage(usable[0]);
+                            } else {
+                              setProposalPages({ name: f.name, pages: usable });
+                            }
+                          } catch (err) {
+                            console.error(err);
+                            window.alert('Could not read that file.');
+                          } finally {
+                            setExtracting(false);
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                      + Upload image/PDF to split into layers
+                    </label>
+                  </div>
+                )}
                 {!extracting && importablePages && (
                   <>
                     <div className="design-import-heading">Your design</div>
@@ -614,61 +947,94 @@ export default function DesignEditor({ design }) {
 
 function ObjectPanel({ selectedObj, onUpdate }) {
   if (!selectedObj) {
-    return <div className="object-panel"><p className="panel-empty">Select an object to edit its properties.</p></div>;
+    return <div className="object-panel"><p className="object-panel-empty">Select an object to edit its properties.</p></div>;
   }
 
   const update = (key, value) => onUpdate(selectedObj._id, { [key]: value });
 
   return (
     <div className="object-panel">
-      <div className="panel-header">
-        <span>{selectedObj.name || selectedObj.type}</span>
+      <div className="op-section">
+        <div className="op-label">{selectedObj.name || selectedObj.type}</div>
       </div>
 
       {(selectedObj.type === 'i-text' || selectedObj.type === 'textbox' || selectedObj.type === 'text') && (
         <>
-          <label className="panel-field">
-            <span>Text</span>
-            <textarea value={selectedObj.text || ''} onChange={(e) => update('text', e.target.value)} rows={3} />
-          </label>
-          <label className="panel-field">
-            <span>Font size</span>
-            <input type="number" value={selectedObj.fontSize || 48} onChange={(e) => update('fontSize', Number(e.target.value))} />
-          </label>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Text</span>
+              <textarea className="op-input" value={selectedObj.text || ''} onChange={(e) => update('text', e.target.value)} rows={3} />
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Font size</span>
+              <input className="op-input" type="number" value={selectedObj.fontSize || 48} onChange={(e) => update('fontSize', Number(e.target.value))} />
+            </div>
+          </div>
         </>
       )}
 
-      <label className="panel-field">
-        <span>Fill</span>
-        <input type="color" value={selectedObj.fill || '#000000'} onChange={(e) => update('fill', e.target.value)} />
-      </label>
-
-      <div className="panel-row">
-        <label className="panel-field">
-          <span>X</span>
-          <input type="number" value={selectedObj.left ?? 0} onChange={(e) => update('left', Number(e.target.value))} />
-        </label>
-        <label className="panel-field">
-          <span>Y</span>
-          <input type="number" value={selectedObj.top ?? 0} onChange={(e) => update('top', Number(e.target.value))} />
-        </label>
+      <div className="op-section">
+        <div className="op-field-label">Social template role</div>
+        <div className="op-row">
+          <button
+            type="button"
+            className={`op-role-btn ${selectedObj._role === 'headline' ? 'active' : ''}`}
+            onClick={() => update('_role', selectedObj._role === 'headline' ? null : 'headline')}
+          >
+            {selectedObj._role === 'headline' ? '✓ Headline' : 'Use as headline'}
+          </button>
+          <button
+            type="button"
+            className={`op-role-btn ${selectedObj._role === 'logo' ? 'active' : ''}`}
+            onClick={() => update('_role', selectedObj._role === 'logo' ? null : 'logo')}
+          >
+            {selectedObj._role === 'logo' ? '✓ Logo' : 'Use as logo'}
+          </button>
+        </div>
+        <p className="op-role-hint">The headline-tagged layer's text gets swapped for generated copy when this design is used as the social-post template.</p>
       </div>
 
-      <div className="panel-row">
-        <label className="panel-field">
-          <span>Width</span>
-          <input type="number" value={selectedObj.width ?? 0} onChange={(e) => update('width', Number(e.target.value))} />
-        </label>
-        <label className="panel-field">
-          <span>Height</span>
-          <input type="number" value={selectedObj.height ?? 0} onChange={(e) => update('height', Number(e.target.value))} />
-        </label>
+      <div className="op-section">
+        <div className="op-field">
+          <span className="op-field-label">Fill</span>
+          <input className="op-color" type="color" value={selectedObj.fill || '#000000'} onChange={(e) => update('fill', e.target.value)} />
+        </div>
       </div>
 
-      <label className="panel-field">
-        <span>Rotation</span>
-        <input type="range" min="0" max="360" value={selectedObj.angle ?? 0} onChange={(e) => update('angle', Number(e.target.value))} />
-      </label>
+      <div className="op-section">
+        <div className="op-row">
+          <div className="op-field">
+            <span className="op-field-label">X</span>
+            <input className="op-input op-input-sm" type="number" value={selectedObj.left ?? 0} onChange={(e) => update('left', Number(e.target.value))} />
+          </div>
+          <div className="op-field">
+            <span className="op-field-label">Y</span>
+            <input className="op-input op-input-sm" type="number" value={selectedObj.top ?? 0} onChange={(e) => update('top', Number(e.target.value))} />
+          </div>
+        </div>
+      </div>
+
+      <div className="op-section">
+        <div className="op-row">
+          <div className="op-field">
+            <span className="op-field-label">Width</span>
+            <input className="op-input op-input-sm" type="number" value={Math.round(selectedObj.width ?? 0)} onChange={(e) => update('width', Number(e.target.value))} />
+          </div>
+          <div className="op-field">
+            <span className="op-field-label">Height</span>
+            <input className="op-input op-input-sm" type="number" value={Math.round(selectedObj.height ?? 0)} onChange={(e) => update('height', Number(e.target.value))} />
+          </div>
+        </div>
+      </div>
+
+      <div className="op-section">
+        <div className="op-field">
+          <span className="op-field-label">Rotation {Math.round(selectedObj.angle ?? 0)}°</span>
+          <input type="range" min="0" max="360" value={selectedObj.angle ?? 0} onChange={(e) => update('angle', Number(e.target.value))} />
+        </div>
+      </div>
     </div>
   );
 }

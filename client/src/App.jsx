@@ -12,6 +12,7 @@ import EditDesignDrawer from './components/EditDesignDrawer';
 import Dashboard from './components/Dashboard';
 import RecipientsList from './components/RecipientsList';
 import CampaignBuilder from './components/CampaignBuilder';
+import SocialAutopilot from './components/SocialAutopilot';
 import SetupForm from './components/SetupForm';
 import RecipientForm from './components/RecipientForm';
 import BatchGeneratePanel from './components/BatchGeneratePanel';
@@ -128,8 +129,12 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
+  const [authMode, setAuthMode] = useState(() => (
+    new URLSearchParams(window.location.search).get('reset_token') ? 'reset' : 'login'
+  )); // 'login' | 'signup' | 'forgot' | 'forgot-sent' | 'reset'
   const [authHint, setAuthHint] = useState('');
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') || '');
+  const [resetPassword, setResetPassword] = useState('');
 
   const bootstrapped = useRef(false);
   const importSourceRef = useRef('manual'); // 'onboarding' = seed the brand kit, 'manual' = leave it alone
@@ -918,6 +923,34 @@ export default function App() {
     setAuthHint('');
   }
 
+  async function handleForgotPassword(e) {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      const result = await auth.forgotPassword(authEmail);
+      setAuthMode('forgot-sent');
+      if (result?.emailConfigured === false) {
+        setAuthHint('This server has no email provider configured yet, so the reset link could not be sent. Contact whoever runs this instance.');
+      }
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  }
+
+  async function handleResetPassword(e) {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      await auth.resetPassword(resetToken, resetPassword);
+      // Drop the token from the URL so a refresh doesn't re-show the reset form.
+      window.history.replaceState({}, '', window.location.pathname);
+      setAuthMode('login');
+      setAuthHint('Password updated — sign in with your new password.');
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  }
+
   useEffect(() => {
     function handleResizeMouseDown(e) {
       const resizer = e.target.closest('.editor-resizer, .editor-resizer-right');
@@ -991,29 +1024,86 @@ export default function App() {
         </button>
         <div className="auth-card">
           <img src="/icons/logomark.png" alt="Homin" className="auth-logo" />
-          <h1 className="auth-title">{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
-          <p className="auth-sub">{authMode === 'login' ? 'Sign in to continue' : 'Get started with Homin'}</p>
-          <form className="auth-form" onSubmit={handleAuthSubmit}>
-            {authMode === 'signup' && (
-              <input placeholder="Your name" className="auth-input" type="text"
-                value={authName} onChange={e => setAuthName(e.target.value)} />
-            )}
-            <input placeholder="Email" className="auth-input" type="text"
-              value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
-            <input placeholder="Password" className="auth-input" type="password"
-              value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
-            {authHint && <div className="auth-hint">{authHint}</div>}
-            {authError && <div className="auth-error">{authError}</div>}
-            <button
-              type="submit"
-              className={`auth-submit ${authEmail.trim() && authPassword.trim() ? 'auth-submit-ready' : ''}`}
-            >
-              {authMode === 'login' ? 'Sign in' : 'Create account'}
-            </button>
-          </form>
-          <button className="auth-switch" onClick={handleAuthSwitch}>
-            {authMode === 'login' ? 'Don\'t have an account? Sign up' : 'Already have an account? Sign in'}
-          </button>
+
+          {authMode === 'reset' ? (
+            <>
+              <h1 className="auth-title">Set a new password</h1>
+              <p className="auth-sub">Choose a new password for your account</p>
+              <form className="auth-form" onSubmit={handleResetPassword}>
+                <input placeholder="New password" className="auth-input" type="password" minLength={6} required
+                  value={resetPassword} onChange={e => setResetPassword(e.target.value)} />
+                {resetPassword && resetPassword.length < 6 && (
+                  <div className="auth-hint">Password must be at least 6 characters.</div>
+                )}
+                {authHint && <div className="auth-hint">{authHint}</div>}
+                {authError && <div className="auth-error">{authError}</div>}
+                <button type="submit" className={`auth-submit ${resetPassword.length >= 6 ? 'auth-submit-ready' : ''}`}>
+                  Set new password
+                </button>
+              </form>
+            </>
+          ) : authMode === 'forgot' ? (
+            <>
+              <h1 className="auth-title">Reset your password</h1>
+              <p className="auth-sub">We'll email you a link to set a new one</p>
+              <form className="auth-form" onSubmit={handleForgotPassword}>
+                <input placeholder="Email" className="auth-input" type="email" required
+                  value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+                {authError && <div className="auth-error">{authError}</div>}
+                <button type="submit" className={`auth-submit ${authEmail.trim() ? 'auth-submit-ready' : ''}`}>
+                  Send reset link
+                </button>
+              </form>
+              <button className="auth-switch" onClick={() => { setAuthMode('login'); setAuthError(''); }}>
+                Back to sign in
+              </button>
+            </>
+          ) : authMode === 'forgot-sent' ? (
+            <>
+              <h1 className="auth-title">Check your email</h1>
+              <p className="auth-sub">
+                If an account exists for {authEmail.trim() || 'that email'}, we've sent a link to reset your password. It expires in 1 hour.
+              </p>
+              {authHint && <div className="auth-hint">{authHint}</div>}
+              <button className="auth-switch" onClick={() => { setAuthMode('login'); setAuthHint(''); }}>
+                Back to sign in
+              </button>
+            </>
+          ) : (
+            <>
+              <h1 className="auth-title">{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+              <p className="auth-sub">{authMode === 'login' ? 'Sign in to continue' : 'Get started with Homin'}</p>
+              <form className="auth-form" onSubmit={handleAuthSubmit}>
+                {authMode === 'signup' && (
+                  <input placeholder="Your name" className="auth-input" type="text"
+                    value={authName} onChange={e => setAuthName(e.target.value)} />
+                )}
+                <input placeholder="Email" className="auth-input" type="email"
+                  value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+                <input placeholder="Password" className="auth-input" type="password" minLength={authMode === 'signup' ? 6 : undefined}
+                  value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
+                {authMode === 'signup' && authPassword && authPassword.length < 6 && (
+                  <div className="auth-hint">Password must be at least 6 characters.</div>
+                )}
+                {authHint && <div className="auth-hint">{authHint}</div>}
+                {authError && <div className="auth-error">{authError}</div>}
+                <button
+                  type="submit"
+                  className={`auth-submit ${authEmail.trim() && authPassword.trim() ? 'auth-submit-ready' : ''}`}
+                >
+                  {authMode === 'login' ? 'Sign in' : 'Create account'}
+                </button>
+              </form>
+              {authMode === 'login' && (
+                <button className="auth-switch" onClick={() => { setAuthMode('forgot'); setAuthError(''); setAuthHint(''); }}>
+                  Forgot password?
+                </button>
+              )}
+              <button className="auth-switch" onClick={handleAuthSwitch}>
+                {authMode === 'login' ? 'Don\'t have an account? Sign up' : 'Already have an account? Sign in'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -1082,7 +1172,7 @@ export default function App() {
               onAddReminder={handleBeccaAddReminder} onDismissReminder={handleBeccaDismissReminder}
               beccaSection={beccaSection} onSectionChange={setBeccaSection}
               beccaModel={beccaModel} onModelChange={(m) => { setBeccaModel(m); localStorage.setItem('homin:model', m); }}
-              chatGreeting={chatGreeting}
+              chatGreeting={chatGreeting} activeDesignId={activeDesignId}
               onActionExecuted={() => {
                 api.becca.listTopics().then(setBeccaTopics).catch(() => {});
                 api.becca.listReminders().then(setBeccaReminders).catch(() => {});
@@ -1216,11 +1306,19 @@ export default function App() {
           </div>
         ) : section === 'design' ? (
           <div className="section-body design-section">
-            <DesignEditor design={activeDesign} />
+            <DesignEditor design={activeDesign} onPatch={patchDesign} />
           </div>
         ) : section === 'brandkit' ? (
           <div className="section-body brandkit-section">
             <BrandKit design={activeDesign} onPatch={patchDesign} />
+          </div>
+        ) : section === 'autopilot' ? (
+          <div className="section-body autopilot-section">
+            <SocialAutopilot
+              design={activeDesign}
+              proposals={allProposals}
+              activeProposal={currentProposal}
+            />
           </div>
         ) : (
           <div className="section-body">

@@ -1,4 +1,18 @@
 import { useState } from 'react';
+import {
+  Type,
+  RectangleHorizontal,
+  Circle,
+  Image as ImageIcon,
+  Layers,
+  Eye,
+  EyeOff,
+  Lock,
+  Unlock,
+  Copy,
+  Trash2,
+  Diamond,
+} from 'lucide-react';
 
 export default function LayerPanel({ layers, onReorder, onSelect, selectedId, onDelete, onDuplicate, onToggleVisible, onToggleLock }) {
   const [dragIdx, setDragIdx] = useState(null);
@@ -53,16 +67,16 @@ export default function LayerPanel({ layers, onReorder, onSelect, selectedId, on
               <span className="layer-name">{layer.name || layer.text?.slice(0, 20) || layer.type}</span>
               <div className="layer-actions">
                 <button className="layer-btn" onClick={(e) => { e.stopPropagation(); onToggleVisible(layer._id); }} title={layer.visible ? 'Hide' : 'Show'}>
-                  {layer.visible ? '👁' : '👁‍🗨'}
+                  {layer.visible ? <Eye size={14} strokeWidth={1.8} /> : <EyeOff size={14} strokeWidth={1.8} />}
                 </button>
                 <button className="layer-btn" onClick={(e) => { e.stopPropagation(); onToggleLock(layer._id); }} title={layer.selectable ? 'Lock' : 'Unlock'}>
-                  {layer.selectable ? '🔓' : '🔒'}
+                  {layer.selectable ? <Unlock size={14} strokeWidth={1.8} /> : <Lock size={14} strokeWidth={1.8} />}
                 </button>
                 <button className="layer-btn" onClick={(e) => { e.stopPropagation(); onDuplicate(layer._id); }} title="Duplicate">
-                  ⧉
+                  <Copy size={14} strokeWidth={1.8} />
                 </button>
                 <button className="layer-btn layer-btn-delete" onClick={(e) => { e.stopPropagation(); onDelete(layer._id); }} title="Delete">
-                  ×
+                  <Trash2 size={14} strokeWidth={1.8} />
                 </button>
               </div>
             </div>
@@ -77,19 +91,20 @@ export default function LayerPanel({ layers, onReorder, onSelect, selectedId, on
 }
 
 function getLayerIcon(layer) {
+  const iconProps = { size: 14, strokeWidth: 1.8 };
   switch (layer.type) {
     case 'i-text':
     case 'text':
-      return 'T';
+      return <Type {...iconProps} />;
     case 'rect':
-      return '▭';
+      return <RectangleHorizontal {...iconProps} />;
     case 'circle':
-      return '○';
+      return <Circle {...iconProps} />;
     case 'image':
-      return '🖼';
+      return <ImageIcon {...iconProps} />;
     case 'group':
-      return '⊞';
+      return <Layers {...iconProps} />;
     default:
-      return '◆';
+      return <Diamond {...iconProps} />;
   }
 }

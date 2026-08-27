@@ -36,6 +36,7 @@ function serializeDesign(row) {
     textOverrides: JSON.parse(row.text_overrides || '{}'),
     pages: JSON.parse(row.pages || '[]'),
     pageOverrides: JSON.parse(row.page_overrides || '{}'),
+    canvasJson: row.canvas_json ? JSON.parse(row.canvas_json) : null,
     sourcePdfPath: row.source_pdf_path || null,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
@@ -163,6 +164,10 @@ router.put('/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'logoSlots')) {
     sets.push('logo_slots = ?');
     values.push(JSON.stringify(req.body.logoSlots || []));
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'canvasJson')) {
+    sets.push('canvas_json = ?');
+    values.push(req.body.canvasJson ? JSON.stringify(req.body.canvasJson) : null);
   }
   sets.push('updated_at = ?');
   values.push(nowIso());

@@ -15,7 +15,7 @@ const CANVAS_SIZES = {
 
 export { CANVAS_SIZES };
 
-export default function DesignCanvas({ canvasJson, canvasSize: canvasSizeProp, onCanvasReady, selectedObject, onObjectSelected, onLayersChanged }) {
+export default function DesignCanvas({ canvasJson, canvasSize: canvasSizeProp, onCanvasReady, selectedObject, onObjectSelected, onLayersChanged, onZoomChange, onImageDrop }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const fabricRef = useRef(null);
@@ -29,6 +29,7 @@ export default function DesignCanvas({ canvasJson, canvasSize: canvasSizeProp, o
   const [canvasSize, setCanvasSize] = useState(canvasSizeProp || 'instagram-post');
   const isPanning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const dims = CANVAS_SIZES[canvasSize];
 
@@ -122,11 +123,28 @@ export default function DesignCanvas({ canvasJson, canvasSize: canvasSizeProp, o
         zoom = Math.max(0.05, Math.min(zoom, 5));
         const pointer = fc.getScenePoint(opt.e);
         fc.zoomToPoint(pointer, zoom);
+        if (onZoomChange) onZoomChange(fc.getZoom());
         opt.e.preventDefault();
         opt.e.stopPropagation();
       });
 
       if (onCanvasReady) onCanvasReady(fc);
+      if (onZoomChange) onZoomChange(fc.getZoom());
+
+      // Restore a previously-saved canvas (see DesignEditor's autosave). Async,
+      // so it runs after onCanvasReady — the layer panel starts empty for a
+      // beat, then populates once the saved objects are enlivened.
+      if (canvasJson) {
+        fc.loadFromJSON(canvasJson)
+          .then(() => {
+            fc.setZoom(scale);
+            fc.setWidth(dims.w * scale);
+            fc.setHeight(dims.h * scale);
+            fc.renderAll();
+            if (onLayersChanged) onLayersChanged();
+          })
+          .catch((err) => console.error('[DesignCanvas] Failed to load saved canvas:', err));
+      }
     } catch (err) {
       console.error('[DesignCanvas] Init error:', err);
     }
@@ -139,24 +157,87 @@ export default function DesignCanvas({ canvasJson, canvasSize: canvasSizeProp, o
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Resize handler
+  // Resize handler — preserve user zoom, only adjust element size to fit container.
+  // We keep the current zoom level and just re-center; the initial fit is handled above.
   useEffect(() => {
     const handleResize = () => {
       const fc = fabricRef.current;
       if (!fc) return;
-      const scale = getScale();
-      fc.setZoom(scale);
-      fc.setWidth(dims.w * scale);
-      fc.setHeight(dims.h * scale);
+      // Don't clobber manual zoom on resize; just ensure canvas element fits container
+      // The zoom itself stays as the user left it.
       fc.renderAll();
+      if (onZoomChange) onZoomChange(fc.getZoom());
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [dims, getScale]);
+  }, [dims, getScale, onZoomChange]);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    const fc = fabricRef.current;
+    if (!fc) return;
+    for (const file of imageFiles) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      try {
+        const img = await fabric.FabricImage.fromURL(dataUrl);
+        // Place at drop position or center; scale to fit 60% of canvas
+        const dimsLocal = CANVAS_SIZES[canvasSize];
+        const maxW = dimsLocal.w * 0.6;
+        const maxH = dimsLocal.h * 0.6;
+        const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+        img.set({
+          left: (dimsLocal.w - img.width * scale) / 2,
+          top: (dimsLocal.h - img.height * scale) / 2,
+          scaleX: scale,
+          scaleY: scale,
+        });
+        // If parent wants to handle, delegate; otherwise add directly
+        if (onImageDrop) {
+          onImageDrop({ dataUrl, width: img.width, height: img.height, left: img.left, top: img.top, scale });
+        } else {
+          img.set({ _id: `obj_drop_${Date.now()}`, name: file.name || 'Image' });
+          fc.add(img);
+          fc.setActiveObject(img);
+          fc.renderAll();
+          if (onLayersChanged) onLayersChanged();
+        }
+      } catch (err) {
+        console.error('Drop image failed', err);
+      }
+    }
+  }, [canvasSize, onImageDrop, onLayersChanged]);
 
   return (
-    <div className="design-canvas-container" ref={containerRef}>
+    <div
+      className={`design-canvas-container ${isDragOver ? 'drag-over' : ''}`}
+      ref={containerRef}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDragEnd={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <canvas ref={canvasRef} />
+      {isDragOver && <div className="design-drop-overlay">Drop image to add to canvas</div>}
     </div>
   );
 }
@@ -178,5 +259,6 @@ function serializeObject(obj) {
     selectable: obj.selectable !== false,
     visible: obj.visible !== false,
     _id: obj._id || null,
+    _role: obj._role || null,
   };
 }

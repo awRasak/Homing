@@ -3,7 +3,7 @@ import { api } from '../api';
 import BeccaChat from './BeccaChat';
 import CalendarPicker from './CalendarPicker';
 import { renderMarkdown } from './PostPreviewPage';
-import { RunPipelineModal, PostCard, EditPostModal } from './ContentPipeline';
+import { RunPipelineModal, PostCard, EditPostModal, AnnounceModal } from './ContentPipeline';
 
 function formatSessionDate(dateStr) {
   const d = new Date(dateStr);
@@ -449,10 +449,11 @@ function PanelBriefings({ briefings, settings, onSaveSettings, workspace }) {
 }
 
 /* ── Panel: Pipeline ── */
-function PanelPipeline({ topics, workspace, onOpenPost, refreshKey }) {
+function PanelPipeline({ topics, workspace, onOpenPost, refreshKey, activeDesignId }) {
   const [posts, setPosts] = useState([]);
   const [showRun, setShowRun] = useState(false);
   const [editPost, setEditPost] = useState(null);
+  const [announcePost, setAnnouncePost] = useState(null);
   const [view, setView] = useState('drafts');
 
   useEffect(() => { loadPosts(); }, [workspace, refreshKey]);
@@ -513,14 +514,16 @@ function PanelPipeline({ topics, workspace, onOpenPost, refreshKey }) {
             {visiblePosts.map(p => (
               <PostCard key={p.id} post={p}
                 onEdit={setEditPost} onDelete={handleDeletePost}
-                onStatusChange={handleStatusChange} onOpen={onOpenPost} />
+                onStatusChange={handleStatusChange} onOpen={onOpenPost}
+                onAnnounce={setAnnouncePost} />
             ))}
           </div>
         )}
       </div>
 
-      {showRun && <RunPipelineModal topics={topics} onRun={handleRun} onClose={() => setShowRun(false)} />}
+      {showRun && <RunPipelineModal topics={topics} onRun={handleRun} onClose={() => setShowRun(false)} designId={activeDesignId} />}
       {editPost && <EditPostModal post={editPost} onSave={handleSavePost} onClose={() => setEditPost(null)} />}
+      {announcePost && <AnnounceModal post={announcePost} designId={activeDesignId} onClose={() => setAnnouncePost(null)} />}
     </div>
   );
 }
@@ -638,7 +641,7 @@ export default function BeccaLayout({
   onAddTopic, onRemoveTopic, onUpdateTopic,
   onSaveSettings, onAddReminder, onDismissReminder,
   workspace, beccaSection, onSectionChange, beccaModel, onModelChange, onActionExecuted,
-  chatGreeting,
+  chatGreeting, activeDesignId,
 }) {
   const [activeSession, setActiveSession] = useState(null);
   const [panelWidth, setPanelWidth] = useState(320);
@@ -716,7 +719,7 @@ export default function BeccaLayout({
               onSaveSettings={onSaveSettings} workspace={workspace} />
           )}
           {activeTab === 'pipeline' && (
-            <PanelPipeline topics={topics} workspace={workspace} onOpenPost={setOpenDraft} refreshKey={draftMoveNonce} />
+            <PanelPipeline topics={topics} workspace={workspace} onOpenPost={setOpenDraft} refreshKey={draftMoveNonce} activeDesignId={activeDesignId} />
           )}
           {activeTab === 'reminders' && (
             <PanelReminders reminders={reminders} onAddReminder={onAddReminder} onDismissReminder={onDismissReminder} />

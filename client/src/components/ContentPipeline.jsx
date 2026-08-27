@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import { composeSocialImage } from '../lib/renderTemplate';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -29,7 +30,7 @@ function SeoScore({ score }) {
   );
 }
 
-export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview, onOpen }) {
+export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview, onOpen, onAnnounce }) {
   const [expanded, setExpanded] = useState(false);
   const statusObj = STATUSES.find(s => s.value === post.status) || STATUSES[0];
 
@@ -48,6 +49,16 @@ export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview, on
           </div>
         </div>
         <div className="pp-head-r">
+          {onAnnounce && (
+            <button
+              type="button"
+              className="pp-announce-btn"
+              title="Draft a social post about this"
+              onClick={(e) => { e.stopPropagation(); onAnnounce(post); }}
+            >
+              📣
+            </button>
+          )}
           <span className="pp-expand">{expanded ? '▾' : '▸'}</span>
         </div>
       </div>
@@ -92,7 +103,7 @@ export function PostCard({ post, onEdit, onDelete, onStatusChange, onPreview, on
   );
 }
 
-export function RunPipelineModal({ topics, onRun, onClose }) {
+export function RunPipelineModal({ topics, onRun, onClose, designId }) {
   const [selectedTopic, setSelectedTopic] = useState('');
   const [customTopic, setCustomTopic] = useState('');
   const [topicContext, setTopicContext] = useState('');
@@ -111,7 +122,7 @@ export function RunPipelineModal({ topics, onRun, onClose }) {
     const timers = [1, 2, 3, 4].map((s, i) => setTimeout(() => setStep(s), (i + 1) * 3000));
     try {
       const result = await api.becca.runPipeline({
-        topicName: topicName.trim(), topicContext, tone, wordCount: parseInt(wordCount) || 800,
+        topicName: topicName.trim(), topicContext, tone, wordCount: parseInt(wordCount) || 800, designId,
       });
       timers.forEach(clearTimeout);
       onRun(result);
@@ -232,6 +243,158 @@ export function EditPostModal({ post, onSave, onClose }) {
           <button className="btn-secondary" onClick={onClose}>Cancel</button>
           <button className="btn-primary" onClick={handleSave}>Save</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Draft a social post about a finished blog post, using the same brand-image
+// step and Buffer scheduling the Autopilot page uses — kept as a review-first
+// draft here rather than posting straight from the pipeline.
+export function AnnounceModal({ post, designId, onClose }) {
+  const [connected, setConnected] = useState(null);
+  const [channels, setChannels] = useState([]);
+  const [selectedChannels, setSelectedChannels] = useState(new Set());
+  const [generating, setGenerating] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  const [previewPosts, setPreviewPosts] = useState(null);
+  const [error, setError] = useState('');
+  const [scheduledOk, setScheduledOk] = useState(false);
+
+  useEffect(() => {
+    api.buffer.getStatus()
+      .then((s) => {
+        setConnected(s.connected);
+        if (!s.connected) return;
+        return api.buffer.getChannels().then((res) => {
+          const list = res.channels || [];
+          setChannels(list);
+          setSelectedChannels(new Set(list.filter((c) => !c.isLocked && !c.isDisconnected).map((c) => c.id)));
+        });
+      })
+      .catch(() => setConnected(false));
+  }, []);
+
+  function toggleChannel(id) {
+    setSelectedChannels((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function handleGenerate() {
+    const selChannels = channels.filter((c) => selectedChannels.has(c.id));
+    if (!selChannels.length) { setError('Select at least one channel'); return; }
+    setError('');
+    setGenerating(true);
+    try {
+      const result = await api.buffer.generate({ channelIds: selChannels, postId: post.id, designId });
+      let posts = result.posts || [];
+      // Prefer the configured social template over the prompt-styled fallback
+      // image the server already generated — no dead end if there's no
+      // template set, or the render/upload fails.
+      const templateUrl = await composeSocialImage({ headline: post.title });
+      if (templateUrl) posts = posts.map((p) => ({ ...p, imageUrl: templateUrl }));
+      setPreviewPosts(posts);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleSchedule() {
+    if (!previewPosts?.length) return;
+    setScheduling(true);
+    setError('');
+    try {
+      const res = await api.buffer.scheduleAll({ posts: previewPosts });
+      if (res.failed?.length && !res.succeeded) throw new Error(res.failed[0]?.error || 'Scheduling failed');
+      setScheduledOk(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setScheduling(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, textAlign: 'left' }}>
+        <h3 style={{ margin: '0 0 0.3rem', fontSize: '1rem', color: 'var(--ink)' }}>Draft a social post</h3>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.84rem', color: 'var(--grey-mid)' }}>
+          About “{esc(post.title || 'Untitled')}”
+        </p>
+
+        {connected === null && <div className="becca-loading">Checking Buffer…</div>}
+
+        {connected === false && (
+          <div className="page-empty" style={{ padding: '1rem 0' }}>
+            <div className="page-empty-title">Buffer isn't connected</div>
+            <div className="page-empty-sub">Connect Buffer from the Autopilot tab first, then come back here.</div>
+          </div>
+        )}
+
+        {connected && scheduledOk && (
+          <div className="page-empty" style={{ padding: '1rem 0' }}>
+            <div className="page-empty-title">Scheduled ✓</div>
+            <div className="page-empty-sub">Your announcement is queued in Buffer.</div>
+            <button className="btn-primary" onClick={onClose} style={{ marginTop: '0.75rem' }}>Done</button>
+          </div>
+        )}
+
+        {connected && !scheduledOk && !previewPosts && (
+          <>
+            <div className="field">
+              <span>Channels</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {channels.map((ch) => (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    className={`autopilot-mode-btn ${selectedChannels.has(ch.id) ? 'active' : ''}`}
+                    disabled={ch.isLocked || ch.isDisconnected}
+                    onClick={() => toggleChannel(ch.id)}
+                  >
+                    {ch.displayName || ch.name}
+                  </button>
+                ))}
+                {!channels.length && <span style={{ fontSize: '0.8rem', color: 'var(--grey-mid)' }}>No channels connected.</span>}
+              </div>
+            </div>
+            {error && <p className="import-error">{error}</p>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="btn-secondary" onClick={onClose}>Cancel</button>
+              <button className="btn-primary" onClick={handleGenerate} disabled={generating || !selectedChannels.size}>
+                {generating ? 'Drafting…' : 'Draft posts'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {connected && !scheduledOk && previewPosts && (
+          <>
+            {previewPosts[0]?.imageUrl && (
+              <img src={previewPosts[0].imageUrl} alt="Generated brand image" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 8, marginBottom: 10 }} />
+            )}
+            <div className="autopilot-preview-list">
+              {previewPosts.map((p, i) => (
+                <div key={i} className="autopilot-preview-item">
+                  <div className="autopilot-preview-service">{p.service} → {p.channelName}</div>
+                  <div className="autopilot-preview-text">{p.text}</div>
+                </div>
+              ))}
+            </div>
+            {error && <p className="import-error">{error}</p>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="btn-secondary" onClick={() => setPreviewPosts(null)}>Back</button>
+              <button className="btn-primary" onClick={handleSchedule} disabled={scheduling}>
+                {scheduling ? 'Scheduling…' : `Schedule ${previewPosts.length} posts`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -25,3 +25,4 @@ yarn-error.log*
 .claude/
 .DS_Store
 .netlify/
+server/data/.jwt_secret

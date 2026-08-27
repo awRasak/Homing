@@ -3,6 +3,7 @@ const NAV_ITEMS = [
   { id: 'proposals', icon: '/icons/file-text.png', title: 'Proposals' },
   { id: 'design', icon: '/icons/pencil.png', title: 'Design' },
   { id: 'brandkit', icon: '/icons/image.png', title: 'Brand Kit' },
+  { id: 'autopilot', icon: '/icons/publish.png', title: 'Autopilot' },
 ];
 
 export default function NavRail({ section, onNavigate, onOpenProfile, onLogout }) {

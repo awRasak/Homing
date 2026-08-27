@@ -281,3 +281,25 @@ export function startSocialScheduler() {
   setInterval(socialTick, 30 * 60_000);
   setTimeout(socialTick, 15_000); // first scan 15s after boot
 }
+
+// ── Social assets pruning (storage-growth guard) ──
+function pruneSocialAssets() {
+  try {
+    const expired = db.prepare("DELETE FROM social_assets WHERE created_at < datetime('now','-30 days')").run();
+    if (expired.changes) console.log(`[Prune] Removed ${expired.changes} expired social_assets (>30d)`);
+    // Cap at 500 most-recent rows — keeps the DB bounded even under heavy use
+    const count = db.prepare('SELECT COUNT(*) as c FROM social_assets').get().c;
+    if (count > 500) {
+      const excess = db.prepare('DELETE FROM social_assets WHERE id NOT IN (SELECT id FROM social_assets ORDER BY created_at DESC LIMIT 500)').run();
+      if (excess.changes) console.log(`[Prune] Trimmed ${excess.changes} social_assets to 500-row cap`);
+    }
+  } catch (e) {
+    console.warn('[Prune] social_assets cleanup failed:', e.message);
+  }
+}
+
+export function startSocialAssetsPruner() {
+  console.log('[Prune] Social assets pruner — daily, 30d TTL + 500-row cap');
+  pruneSocialAssets(); // run once on boot to catch any backlog
+  setInterval(pruneSocialAssets, 24 * 60 * 60 * 1000);
+}

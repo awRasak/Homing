@@ -1,4 +1,5 @@
 const BASE = import.meta.env.VITE_API_BASE || '/api';
+export { BASE };
 
 async function handle(res, fromAuth = false) {
   if (res.status === 401 && !fromAuth) {
@@ -70,6 +71,18 @@ export const auth = {
     }).then((res) => handle(res, true)),
   me: () =>
     fetch(`${BASE}/auth/me`, { headers: authHeaders() }).then(handle),
+  forgotPassword: (email) =>
+    fetch(`${BASE}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: jsonBody({ email }),
+    }).then((res) => handle(res, true)),
+  resetPassword: (token, password) =>
+    fetch(`${BASE}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: jsonBody({ token, password }),
+    }).then((res) => handle(res, true)),
 };
 
 // ── Protected API ──
@@ -354,6 +367,14 @@ export const api = {
         body: jsonBody({ key, value }),
       }).then(handle),
 
+    getSocialTemplate: () =>
+      fetch(`${BASE}/becca/social-template`, { headers: authHeaders() }).then(handle),
+    setSocialTemplate: (designId) =>
+      fetch(`${BASE}/becca/social-template`, {
+        method: 'PUT', headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: jsonBody({ designId }),
+      }).then(handle),
+
     // ═══════════════════════════════════════════
     // CONTENT PIPELINE
     // ═══════════════════════════════════════════
@@ -423,5 +444,41 @@ export const api = {
       fetch(`${BASE}/social/stats/${topicId}`, { headers: authHeaders() }).then(handle),
     getStubs: () =>
       fetch(`${BASE}/social/stubs`, { headers: authHeaders() }).then(handle),
+  },
+
+  buffer: {
+    getStatus: () =>
+      fetch(`${BASE}/buffer/status`, { headers: authHeaders() }).then(handle),
+    getChannels: () =>
+      fetch(`${BASE}/buffer/channels`, { headers: authHeaders() }).then(handle),
+    getPosts: () =>
+      fetch(`${BASE}/buffer/posts`, { headers: authHeaders() }).then(handle),
+    createPost: (data) =>
+      fetch(`${BASE}/buffer/posts`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
+      }).then(handle),
+    deletePost: (postId) =>
+      fetch(`${BASE}/buffer/posts/${postId}`, {
+        method: 'DELETE', headers: authHeaders(),
+      }).then(handle),
+    generate: (data) =>
+      fetch(`${BASE}/buffer/generate`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
+      }).then(handle),
+    scheduleAll: (data) =>
+      fetch(`${BASE}/buffer/schedule-all`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
+      }).then(handle),
+    generateImage: (data) =>
+      fetch(`${BASE}/buffer/generate-image`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
+      }).then(handle),
+  },
+
+  socialAssets: {
+    upload: (dataUrl) =>
+      fetch(`${BASE}/social-assets`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody({ dataUrl }),
+      }).then(handle),
   },
 };

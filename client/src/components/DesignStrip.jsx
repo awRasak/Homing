@@ -53,11 +53,24 @@ export default function DesignStrip({ designs, activeDesignId, onSelect, onCreat
               </span>
             )}
           </button>
+          {editingId !== d.id && (
+            <button
+              type="button"
+              className="design-chip-rename"
+              title="Rename this design"
+              onClick={(e) => {
+                e.stopPropagation();
+                startRename(d);
+              }}
+            >
+              ✎
+            </button>
+          )}
           {d.id === activeDesignId && (
             <button
               type="button"
               className="design-chip-clear"
-              title="Clear this design"
+              title="Delete design"
               onClick={() => setConfirmDeleteId(d.id)}
             >
               ×

@@ -221,3 +221,28 @@ export function generateProposal({ design, companyName, notes, provider: provide
   const prompt = buildPrompt({ design, companyName, notes });
   return provider.generate({ prompt, apiKey, model });
 }
+
+export async function generateText(prompt, { provider: providerOverride, model } = {}) {
+  const providerId = providerOverride || getActiveProvider();
+  const provider = PROVIDERS[providerId];
+  if (!provider) throw new Error(`Unknown AI provider: ${providerId}`);
+
+  const apiKey = process.env[provider.envKey];
+  if (!apiKey) throw new Error(`${provider.name} API key is not configured (set ${provider.envKey} in .env)`);
+
+  // Raw text generation — bypasses proposal-specific validation
+  if (providerId === 'groq') {
+    const { default: Groq } = await import('groq-sdk');
+    const client = new Groq({ apiKey });
+    const response = await client.chat.completions.create({
+      model: model || 'openai/gpt-oss-20b',
+      messages: [{ role: 'system', content: 'You are an expert content strategist. Return only valid JSON, no markdown.' }, { role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_tokens: 1500,
+    });
+    const content = response.choices[0]?.message?.content;
+    if (!content) throw new Error('No content returned from Groq');
+    return content;
+  }
+  return provider.generate({ prompt, apiKey, model });
+}

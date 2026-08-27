@@ -10,9 +10,11 @@ import campaignsRouter from './routes/campaigns.js';
 import trackingRouter from './routes/tracking.js';
 import beccaRouter from './routes/becca.js';
 import socialRouter from './routes/social.js';
+import bufferRouter from './routes/buffer.js';
 import authRouter from './routes/auth.js';
+import socialAssetsRouter from './routes/socialAssets.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
-import { startScheduler } from './scheduler.js';
+import { startScheduler, startSocialAssetsPruner } from './scheduler.js';
 import { requireAuth } from './auth.js';
 import { probePyMuPDF } from './pdfTool.js';
 import './db.js';
@@ -42,10 +44,15 @@ app.use('/api/campaigns', requireAuth, campaignsRouter);
 app.use('/api/track', requireAuth, trackingRouter);
 app.use('/api/becca', requireAuth, beccaRouter);
 app.use('/api/social', requireAuth, socialRouter);
+app.use('/api/buffer', requireAuth, bufferRouter);
+// Not gated by requireAuth at this level — Buffer's servers must be able to
+// GET the composited image directly; the router itself guards the write path.
+app.use('/api/social-assets', socialAssetsRouter);
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Homing server listening on http://localhost:${port}`);
   probePyMuPDF();
   startScheduler();
+  startSocialAssetsPruner();
 });

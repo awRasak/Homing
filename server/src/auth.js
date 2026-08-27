@@ -83,6 +83,46 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_workspace ON users(workspace);
 `);
 
+// ── Password reset tokens ──
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS password_resets (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets(token_hash);
+`);
+
+function hashResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// Returns the raw token (only ever available here — only its hash is stored).
+export function createPasswordResetToken(userId) {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  db.prepare('INSERT INTO password_resets (id, user_id, token_hash, expires_at, used, created_at) VALUES (?, ?, ?, ?, 0, ?)')
+    .run(crypto.randomUUID(), userId, hashResetToken(rawToken), expiresAt, new Date().toISOString());
+  return rawToken;
+}
+
+// Validates + burns a reset token in one step. Returns the userId, or null if
+// invalid/expired/already used.
+export function consumePasswordResetToken(rawToken) {
+  const row = db.prepare('SELECT * FROM password_resets WHERE token_hash = ?').get(hashResetToken(rawToken || ''));
+  if (!row || row.used || new Date(row.expires_at) < new Date()) return null;
+  db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(row.id);
+  return row.user_id;
+}
+
+export function updateUserPassword(userId, newPassword) {
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), userId);
+}
+
 export function createUser(email, password, name) {
   const id = crypto.randomUUID();
   const workspace = `ws_${id.slice(0, 8)}`;
