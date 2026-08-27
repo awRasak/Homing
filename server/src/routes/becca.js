@@ -134,7 +134,15 @@ async function fetchTopicNews(topicName, region = '', maxItems = 5) {
     const sourceMatch = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
     const source = sourceMatch ? sourceMatch[1].trim() : 'News';
     const link = grab('link') || grab('guid');
-    items.push({ title, source, url: link });
+    const rawDate = grab('pubDate');
+    let date = '';
+    if (rawDate) {
+      try {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      } catch {}
+    }
+    items.push({ title, source, url: link, date, pubDate: rawDate });
   }
   return items;
 }
@@ -1463,6 +1471,24 @@ Always reply naturally and helpfully. Be concise.`;
       }
     }
 
+    // Follow-up temporal: "when did this happen?" → answer with dates from last topic
+    if (!actionResult) {
+      const lowerWhen = message.toLowerCase();
+      if (/when did (?:this|that|it) happen|when was (?:this|that|it)|how recent is this|what date/i.test(lowerWhen)) {
+        const lastTopic = (kb.topics && kb.topics.length ? kb.topics[kb.topics.length - 1].name : '') || db.prepare('SELECT name FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY updated_at DESC LIMIT 1').get(ws, 'active')?.name || '';
+        if (lastTopic) {
+          try {
+            const items = await fetchTopicNews(lastTopic, kb.region || '', 5);
+            if (items.length) {
+              const dated = items.map(i => `- ${i.title} [${i.source}${i.date ? ' — ' + i.date : ''}]`).join('\n');
+              actionResult = `For "${lastTopic}":\n${dated}`;
+              reply = actionResult;
+            }
+          } catch {}
+        }
+      }
+    }
+
     // Fallback: if AI didn't emit a JSON action, detect intent from user message
     if (!actionResult) {
       const lower = message.toLowerCase();
@@ -1710,17 +1736,17 @@ async function executeAction(action, params, ws, model, region = '') {
         try {
           const summarized = await callGroq({
             model,
-            system: `You are a research assistant. Given raw search results${regionQuery ? ` scoped to ${regionQuery}` : ''}, return a concise bullet-point summary of up to 5 findings, each on its own line starting with "- ". Include the source name in brackets and keep it factual. No markdown headers.`,
+            system: `You are a research assistant. Given raw search results${regionQuery ? ` scoped to ${regionQuery}` : ''}, return a concise bullet-point summary of up to 5 findings, each on its own line starting with "- ". Include the source name AND date in brackets like [Source — 12 Aug 2025] and keep it factual. No markdown headers.`,
             user: JSON.stringify(items),
             temperature: 0.3,
             maxTokens: 1024,
           });
           formatted = stripThink(summarized);
           if (/<think/i.test(formatted) || !formatted) {
-            formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
+            formatted = items.map(i => `- ${i.title} [${i.source}${i.date ? ' — ' + i.date : ''}]`).join('\n');
           }
         } catch {
-          formatted = items.map(i => `- ${i.title} [${i.source}]`).join('\n');
+          formatted = items.map(i => `- ${i.title} [${i.source}${i.date ? ' — ' + i.date : ''}]`).join('\n');
         }
         return formatted;
       }
