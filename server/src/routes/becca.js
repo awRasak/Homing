@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db, nowIso, newId } from '../db.js';
+import { generateBrandImage } from '../ai/brandImage.js';
 
 const router = Router();
 
@@ -1330,7 +1331,7 @@ router.post('/chat/message', async (req, res) => {
 
     // Get context: central knowledge base snapshot
     const kb = buildKnowledgeBase(ws);
-    const recentChat = db.prepare('SELECT role, content FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at DESC LIMIT 10').all(ws).reverse();
+    const recentChat = db.prepare('SELECT role, content FROM becca_chat_history WHERE workspace = ? AND session_id = ? ORDER BY created_at DESC LIMIT 10').all(ws, sessionId).reverse();
     const chatContext = recentChat.map(m => `${m.role}: ${m.content}`).join('\n');
     const knowledgeContext = kb.toPrompt();
 
@@ -1435,6 +1436,32 @@ Always reply naturally and helpfully. Be concise.`;
         }
       }
     } catch {}
+
+    // Compound intent: "run a search now and keep tabs on X" → do BOTH
+    if (!actionResult) {
+      const lower = message.toLowerCase();
+      const hasAdd = /(keep tabs on|keep an eye on|keep track of|add to watchlist|put on.*radar|track|monitor|watch)/i.test(lower);
+      const hasSearch = /(run a search|search|look up|find|google|research|check)/i.test(lower);
+      if (hasAdd && hasSearch) {
+        const ADD_PHRASES_COMPOUND = [
+          'keep tabs on', 'keep an eye on', 'keep track of', 'keep watching',
+          'stay on top of', 'stay updated on', 'follow up on', 'follow', 'track', 'monitor', 'watch',
+          'add to (?:my )?watchlist', 'put on (?:my )?(?:radar|watchlist)',
+        ].join('|');
+        const m = lower.match(new RegExp(`(?:(?:${ADD_PHRASES_COMPOUND}))(?:\\s+(?:on|about|for))?\\s+(.+)`, 'i'));
+        if (m) {
+          let topicName = m[1].replace(/[✦,.!?]+$/g, '').replace(/\s+(?:and|then).*$/i, '').trim();
+          // strip trailing "now and..." prefix contamination
+          topicName = topicName.replace(/^now\s+/, '').trim();
+          if (topicName) {
+            const addRes = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region);
+            const searchRes = await executeAction('SEARCH', { query: topicName }, ws, model, kb.region);
+            actionResult = `${addRes}\n\n${searchRes}`;
+            reply = actionResult;
+          }
+        }
+      }
+    }
 
     // Fallback: if AI didn't emit a JSON action, detect intent from user message
     if (!actionResult) {
@@ -1597,9 +1624,10 @@ async function executeAction(action, params, ws, model, region = '') {
   try {
     switch (action) {
       case 'ADD_TOPIC': {
-        const name = (params.name || '').trim();
+        let name = (params.name || '').trim().replace(/^[✦•\-–—\s]+|[✦•,.!?;\s]+$/g, '').trim();
         if (!name) return 'Could not add topic — no name provided.';
-        const existing = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(normalized_topic) = LOWER(?) AND status = ?').get(ws, name, 'active');
+        const stripped = name.toLowerCase().replace(/[,.;!?]+$/g, '');
+        const existing = db.prepare('SELECT id, normalized_topic FROM becca_topics WHERE workspace = ? AND status = ?').all(ws, 'active').find(r => r.normalized_topic.toLowerCase().replace(/[,.;!?]+$/g, '') === stripped);
         if (existing) return `Topic "${name}" is already on your watchlist.`;
         const id = newId();
         const now = nowIso();
@@ -1777,6 +1805,28 @@ router.put('/settings', (req, res) => {
     db.prepare('INSERT INTO becca_settings (workspace, key, value) VALUES (?,?,?)').run(ws, key, val);
   }
   res.json({ ok: true });
+});
+
+// Which design (if any) is the reusable social-post template — a design
+// whose canvas has a layer tagged _role:'headline' that the social image
+// compositor swaps in generated copy for. One per workspace.
+router.get('/social-template', (req, res) => {
+  const ws = req.workspace;
+  const row = db.prepare("SELECT value FROM becca_settings WHERE workspace = ? AND key = 'social_template_design_id'").get(ws);
+  res.json(row ? JSON.parse(row.value) : { designId: null });
+});
+
+router.put('/social-template', (req, res) => {
+  const ws = req.workspace;
+  const designId = req.body.designId || null;
+  const val = JSON.stringify({ designId });
+  const existing = db.prepare("SELECT workspace FROM becca_settings WHERE workspace = ? AND key = 'social_template_design_id'").get(ws);
+  if (existing) {
+    db.prepare("UPDATE becca_settings SET value = ? WHERE workspace = ? AND key = 'social_template_design_id'").run(val, ws);
+  } else {
+    db.prepare("INSERT INTO becca_settings (workspace, key, value) VALUES (?, 'social_template_design_id', ?)").run(ws, val);
+  }
+  res.json({ ok: true, designId });
 });
 
 // Ensure becca_settings table exists
@@ -1969,27 +2019,16 @@ Return ONLY valid JSON with this exact structure:
 // ═══════════════════════════════════════════
 router.post('/pipeline/image', async (req, res) => {
   try {
-    const { title, topic, style } = req.body;
-    const prompt = `Professional blog post cover image for "${title || topic}". ${style || 'Modern minimalist design, clean composition, professional photography style'}. 1200x630 aspect ratio, high quality, no text overlay.`;
-    const encoded = encodeURIComponent(prompt);
-    // Pollinations.ai rejects seeds above the 32-bit signed int max (2147483647);
-    // Date.now() is a 13-digit ms timestamp and overflows that, so the API
-    // silently failed image generation while a HEAD check still looked fine.
-    const seed = Math.floor(Math.random() * 2147483647);
-    const url = `https://image.pollinations.ai/prompt/${encoded}?model=flux&width=1200&height=630&nologo=true&seed=${seed}`;
-
-    // Verify image is accessible — a GET, not HEAD: pollinations.ai returns 200
-    // on HEAD even when the actual generation subsequently fails (e.g. bad
-    // params), so HEAD alone was a false-positive check.
-    const imgRes = await fetch(url, { redirect: 'follow' });
-    const contentType = imgRes.headers.get('content-type') || '';
-    if (!imgRes.ok || !contentType.startsWith('image/')) {
-      const body = await imgRes.text().catch(() => '');
-      throw new Error(`Image generation failed (${imgRes.status}): ${body.slice(0, 200)}`);
-    }
-    const finalUrl = imgRes.url || url;
-
-    res.json({ url: finalUrl, prompt });
+    const { title, topic, style, designId } = req.body;
+    const { url, prompt } = await generateBrandImage({
+      headline: title,
+      topic,
+      designId,
+      style: style || 'modern minimalist design, clean composition, professional photography style',
+      width: 1200,
+      height: 630,
+    });
+    res.json({ url, prompt });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2054,7 +2093,7 @@ router.post('/pipeline/seo/check', async (req, res) => {
 // ═══════════════════════════════════════════
 router.post('/pipeline/run', async (req, res) => {
   try {
-    const { topicName, topicContext, tone, wordCount, model } = req.body;
+    const { topicName, topicContext, tone, wordCount, model, designId } = req.body;
     const ws = req.workspace;
 
     // Step 1: Scout news
@@ -2080,7 +2119,7 @@ router.post('/pipeline/run', async (req, res) => {
     // Step 3: Generate cover image
     const imgRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/image`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: post.title, topic: topicName })
+      body: JSON.stringify({ title: post.title, topic: topicName, designId })
     });
     const imgData = await imgRes.json();
     if (!imgRes.ok || imgData.error) {
