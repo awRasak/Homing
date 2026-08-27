@@ -208,6 +208,13 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
     return `${days}d ago`;
   }
 
+  function daysWatching(iso) {
+    if (!iso) return '';
+    const diff = Date.now() - new Date(iso).getTime();
+    const days = Math.max(1, Math.ceil(diff / 86400000));
+    return `${days}d`;
+  }
+
   const untitled = topics.filter(t => !String(t.name||'').trim() && !String(t.context||'').trim());
   return (
     <div className="watchlist-panel">
@@ -253,6 +260,7 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
                 <div className="topic-title-row">
                   <span className={`topic-dot priority-${t.priority || 'medium'}`} />
                   <span className="topic-name" title={t.name || t.context || t.normalized_topic}>{t.name || t.context || t.normalized_topic || '(untitled topic)'}</span>
+                  <span className="topic-days" title={`Watching since ${t.created_at ? new Date(t.created_at).toLocaleDateString() : ''}`}>{daysWatching(t.created_at)}</span>
                   {t.last_fetch_status === 'failed' && (
                     <span className="topic-warning" title={t.last_fetch_error || 'Fetch failed'}>⚠</span>
                   )}
@@ -332,6 +340,7 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
             {pausedTopics.map(t => (
               <div key={t.id} className="topic-row topic-paused">
                 <span className="topic-name" title={t.name || t.context}>{t.name || t.context || t.normalized_topic || '(untitled topic)'}</span>
+                <span className="topic-days" title={`Watching since ${t.created_at ? new Date(t.created_at).toLocaleDateString() : ''}`}>{daysWatching(t.created_at)}</span>
                 <button className="topic-resume" onClick={() => handleToggleStatus(t.id)} title="Resume">▶</button>
                 <button className="topic-remove" onClick={() => onRemoveTopic(t.id)} title="Delete">×</button>
               </div>
