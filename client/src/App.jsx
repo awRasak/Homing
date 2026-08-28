@@ -770,6 +770,10 @@ export default function App() {
       const profile = await api.becca.getProfile();
       setBeccaProfile(profile || null);
     } catch { /* keep whatever we have */ }
+    try {
+      const topics = await api.becca.listTopics();
+      setBeccaTopics(topics || []);
+    } catch { /* keep whatever we have */ }
     setTimeout(() => setSetupPhase('complete'), 1200);
     setupTimer.current = setTimeout(finishCompanySetup, 2600);
   }

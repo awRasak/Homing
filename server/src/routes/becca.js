@@ -1358,14 +1358,14 @@ Recent conversation:
 ${chatContext}
 
 You have these capabilities:
-- SEARCH/RESEARCH: Search the web for news on any topic
+- SEARCH/RESEARCH: Search the web for CURRENT NEWS on a topic — recent, evolving, time-sensitive information only. Not for general/evergreen knowledge.
 - BRIEFING: Generate a briefing on tracked topics
 - ADD_TOPIC: Add a new topic to the watchlist
 - REMOVE_TOPIC: Remove a topic from the watchlist
 - PIPELINE: Run the content pipeline (scout → write → image → seo)
 - REMINDER: Set a reminder
 - MEMORY: Remember something important
-- CHAT: Just have a conversation
+- CHAT: Have a conversation, OR answer any general-knowledge/factual/how-to question directly from what you already know (e.g. "what documents do I need for X", "how does Y work") — this is the default for anything that isn't current-events, isn't a watchlist/reminder/memory action, and isn't asking you to write content. When in doubt between SEARCH and CHAT, prefer CHAT and answer directly.
 
 CRITICAL RULES:
 1. ALWAYS respond with a JSON action block. NEVER respond with just plain text.
@@ -1385,7 +1385,8 @@ IMPORTANT: When the user says things like "turn this into a blog post", "write t
 
 Action types and params:
 - SEARCH: { "query": "search terms" }
-IMPORTANT: One-off lookup. These all mean SEARCH: "search for", "look up", "find", "google", "scout", "research", "dig into", "tell me about", "what's happening with", "what's going on with", "any news on", "latest on", "update on" (one-off), "what's the latest with", "catch me up on" (one-off), "have you heard about", "did you see", "is there anything new on". Emit SEARCH JSON.
+IMPORTANT: One-off lookup for CURRENT EVENTS or something that changes over time — not general/evergreen knowledge you already know. These all mean SEARCH: "search for", "look up", "google", "scout", "what's happening with", "what's going on with", "any news on", "latest on", "update on" (one-off), "what's the latest with", "catch me up on" (one-off), "have you heard about", "did you see", "is there anything new on". Emit SEARCH JSON.
+DO NOT use SEARCH for general-knowledge, factual, or "what/how/which" questions you can already answer confidently (e.g. "what documents do I need for X", "how does Y work", "what are the requirements for Z", "explain X") — even if the phrasing includes "tell me about" or "find out". Those are CHAT. Only use SEARCH when the user is explicitly asking about something recent, evolving, or newsworthy that requires up-to-date information you wouldn't already know.
 - BRIEFING: { "topics": ["topic1", "topic2"] } (or empty array for all)
 IMPORTANT: Digest of tracked topics. These all mean BRIEFING: "brief me", "give me a briefing", "daily briefing", "morning brief", "what's new today", "what's new with my topics", "catch me up on everything", "summarize my watchlist", "run the brief", "what did I miss", "overnight update", "today's digest", "briefing on", "update on all my topics". Emit BRIEFING JSON.
 - ADD_TOPIC: { "name": "topic name", "context": "optional context" }
@@ -1401,10 +1402,11 @@ IMPORTANT: These all mean REMINDER: "remind me", "remind me to", "nudge me", "pi
 - MEMORY: { "content": "what to remember" }
 IMPORTANT: These all mean MEMORY: "remember that", "remember this", "keep in mind", "don't forget that", "note that", "make a note", "store that", "save that", "for future reference", "from now on remember". Emit MEMORY JSON.
 - CHAT: {} (no params needed)
-IMPORTANT: Free-form thinking. These all mean CHAT — no side-effect: "brainstorm", "jam on", "spitball", "think through", "talk through", "what do you think about", "ideas for", "help me decide", "pros and cons of", "weigh in on", "chat about", "just wondering", "quick question", "explain", "what's your take", "how would you approach", "let's think out loud". Emit CHAT JSON.
+IMPORTANT: Free-form thinking AND general/factual knowledge questions. These all mean CHAT — no side-effect: "brainstorm", "jam on", "spitball", "think through", "talk through", "what do you think about", "ideas for", "help me decide", "pros and cons of", "weigh in on", "chat about", "just wondering", "quick question", "explain", "what's your take", "how would you approach", "let's think out loud", plus any factual/definitional/how-to question ("what documents do I need for X", "what are the requirements for Y", "how do I Z"). Emit CHAT JSON and just answer directly from what you know.
 
 If it's just a conversation, use CHAT with an empty params object.
-Always reply naturally and helpfully. Be concise.`;
+Always reply naturally and helpfully. Be concise.
+When a CHAT answer is naturally a list (steps, requirements, documents, options), give a clean, confident, directly-stated list — no inline source citations or "(Source — date)" tags. Citations belong only in SEARCH/BRIEFING results, which draw from specific articles; a CHAT answer is your own knowledge, not a digest of sources.`;
 
     const response = await callGroq({
       model,
@@ -1453,7 +1455,7 @@ Always reply naturally and helpfully. Be concise.`;
         const parsed = JSON.parse(jsonStr);
         reply = stripThink(parsed.reply || text);
         if (parsed.action && parsed.action !== 'CHAT') {
-          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, kb.region);
+          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, kb.region, req.headers.authorization);
         }
       }
     } catch {}
@@ -1475,8 +1477,8 @@ Always reply naturally and helpfully. Be concise.`;
           // strip trailing "now and..." prefix contamination
           topicName = topicName.replace(/^now\s+/, '').trim();
           if (topicName) {
-            const addRes = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region);
-            const searchRes = await executeAction('SEARCH', { query: topicName }, ws, model, kb.region);
+            const addRes = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region, req.headers.authorization);
+            const searchRes = await executeAction('SEARCH', { query: topicName }, ws, model, kb.region, req.headers.authorization);
             actionResult = `${addRes}\n\n${searchRes}`;
             reply = actionResult;
           }
@@ -1512,7 +1514,7 @@ Always reply naturally and helpfully. Be concise.`;
       if (removeMatch) {
         let topicName = removeMatch[1].replace(/[.!?]+$/, '').trim();
         if (topicName) {
-          actionResult = await executeAction('REMOVE_TOPIC', { name: topicName }, ws, model, kb.region);
+          actionResult = await executeAction('REMOVE_TOPIC', { name: topicName }, ws, model, kb.region, req.headers.authorization);
           reply = actionResult;
         }
       }
@@ -1546,7 +1548,7 @@ Always reply naturally and helpfully. Be concise.`;
           let topicName = addMatch[1].replace(/[.!?]+$/, '')
             .replace(/\s+(?:going forward|for me|regularly|from now on).*$/i, '').trim();
           if (topicName) {
-            actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region);
+            actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region, req.headers.authorization);
             reply = actionResult;
           }
         }
@@ -1557,7 +1559,7 @@ Always reply naturally and helpfully. Be concise.`;
       const searchMatch = lower.match(/(?:search|look up|find|google|research|check)\s+(?:for\s+)?(.+)/i);
       if (searchMatch) {
         const query = searchMatch[1].replace(/[.!?]+$/, '').trim();
-        actionResult = await executeAction('SEARCH', { query }, ws, model, kb.region);
+        actionResult = await executeAction('SEARCH', { query }, ws, model, kb.region, req.headers.authorization);
         reply = actionResult;
       }
     }
@@ -1566,7 +1568,7 @@ Always reply naturally and helpfully. Be concise.`;
       const pipelineMatch = lower.match(/(?:turn|make|write|create|convert)\s+(?:this|that|it|the(?:se)?\s+results?)\s+(?:into|as|to)\s+(?:a\s+)?(?:blog\s*post|article|post|draft|content)/i);
       if (pipelineMatch) {
         const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region);
+        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region, req.headers.authorization);
         reply = actionResult;
       }
     }
@@ -1603,7 +1605,7 @@ Always reply naturally and helpfully. Be concise.`;
         // Clean up common trailing phrases
         topicName = topicName.replace(/\s+(?:covering|including|and related|related).+$/i, '').trim();
         if (topicName) {
-          actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region);
+          actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region, req.headers.authorization);
           reply = actionResult;
         }
       }
@@ -1619,20 +1621,20 @@ Always reply naturally and helpfully. Be concise.`;
         // Extract just the search query, stripping pipeline-related text
         let query = message.replace(/^(?:search|look up|find|google|research|check)\s+(?:for\s+)?/i, '').replace(/[.!?]+$/, '').trim();
         query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
-        actionResult = await executeAction('SEARCH', { query: query || message }, ws, model, kb.region);
+        actionResult = await executeAction('SEARCH', { query: query || message }, ws, model, kb.region, req.headers.authorization);
         reply = actionResult;
       }
       // If user also wants pipeline after search, queue it
       if (wantsPipeline && wantsSearch) {
         try {
           const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-          const pipelineResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region);
+          const pipelineResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region, req.headers.authorization);
           reply += '\n\n' + pipelineResult;
           actionResult = pipelineResult;
         } catch { /* pipeline may fail if server self-call times out */ }
       } else if (wantsPipeline && !wantsSearch) {
         const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region);
+        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region, req.headers.authorization);
         reply = actionResult;
       }
     }
@@ -1659,7 +1661,7 @@ Always reply naturally and helpfully. Be concise.`;
   }
 });
 
-async function executeAction(action, params, ws, model, region = '') {
+async function executeAction(action, params, ws, model, region = '', authHeader = '') {
   try {
     switch (action) {
       case 'ADD_TOPIC': {
@@ -1721,7 +1723,7 @@ async function executeAction(action, params, ws, model, region = '') {
         const port = process.env.PORT || 4000;
         try {
           const pipelineRes = await fetch(`http://localhost:${port}/api/becca/pipeline/run`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: authHeader },
             body: JSON.stringify({ workspace: ws, topicName, tone: params.tone || '', model })
           });
           const result = await pipelineRes.json();
@@ -2134,17 +2136,22 @@ router.post('/pipeline/run', async (req, res) => {
   try {
     const { topicName, topicContext, tone, wordCount, model, designId } = req.body;
     const ws = req.workspace;
+    // These are internal self-calls to sibling routes on the same server,
+    // but they're still behind requireAuth (mounted under /api/becca) — so
+    // the original request's token has to be forwarded, or every step 401s
+    // with "Missing or invalid authorization header".
+    const authHeaders = { 'Content-Type': 'application/json', Authorization: req.headers.authorization };
 
     // Step 1: Scout news
     const scoutRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/scout`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: authHeaders,
       body: JSON.stringify({ topic: topicName, topicContext, model })
     });
     const { items: newsItems } = await scoutRes.json();
 
     // Step 2: Write blog post
     const writeRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/write`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: authHeaders,
       body: JSON.stringify({ topic: topicName, topicContext, newsItems, tone, wordCount, model })
     });
     const post = await writeRes.json();
@@ -2157,7 +2164,7 @@ router.post('/pipeline/run', async (req, res) => {
 
     // Step 3: Generate cover image
     const imgRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/image`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: authHeaders,
       body: JSON.stringify({ title: post.title, topic: topicName, designId })
     });
     const imgData = await imgRes.json();
@@ -2168,7 +2175,7 @@ router.post('/pipeline/run', async (req, res) => {
 
     // Step 4: SEO check on draft
     const seoRes = await fetch(`http://localhost:${process.env.PORT || 4000}/api/becca/pipeline/seo/check`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: authHeaders,
       body: JSON.stringify({ title: post.title, body: post.body, excerpt: post.excerpt, tags: post.tags })
     });
     const seoData = await seoRes.json();

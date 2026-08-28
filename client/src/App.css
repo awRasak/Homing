@@ -7026,7 +7026,7 @@ input.input-main:focus {
 }
 
 .ob-autofill-note, .ob-review-note {
-  background: color-mix(in srgb, var(--green-dark) 12%, transparent);
+  background: color-mix(in srgb, #ff9502 20%, transparent);
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 0.85rem;
