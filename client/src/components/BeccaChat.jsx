@@ -8,10 +8,10 @@ function esc(s) {
 }
 
 const MODEL_OPTIONS = [
-  { value: 'gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'Fast, smart, best for daily use', color: '#7c3aed' },
-  { value: 'gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'Deep analysis & complex questions', color: '#0ea5e9' },
+  { value: 'gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'Default — best instruction-following for daily use', color: '#0ea5e9' },
+  { value: 'gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'Faster, lighter, less reliable on nuance', color: '#7c3aed' },
   { value: 'compound-mini', label: 'Compound Mini', desc: 'Fast, light, low latency', color: 'var(--green-dark)' },
-  { value: 'compound', label: 'Compound', desc: 'Most powerful available', color: '#f59e0b' },
+  { value: 'compound', label: 'Compound', desc: 'Agentic — does its own web browsing/tool use', color: '#f59e0b' },
   { value: 'qwen-3.6-27b', label: 'Qwen 3.6 27B', desc: 'Latest generation, experimental', color: '#ef4444' },
 ];
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db, nowIso, newId } from '../db.js';
 import { generateBrandImage } from '../ai/brandImage.js';
+import { tavilySearch, isTavilyAvailable } from '../ai/tavily.js';
 
 const router = Router();
 
@@ -19,7 +20,7 @@ const GROQ_MODELS = {
 function resolveGroqModel(model) {
   if (GROQ_MODELS[model]) return GROQ_MODELS[model];
   if (model && typeof model === 'string') return model;
-  return 'openai/gpt-oss-20b';
+  return 'openai/gpt-oss-120b';
 }
 
 const COUNTRY_LOCALES = {
@@ -171,15 +172,23 @@ async function callGroqDirect({ model, system, user, temperature = 0.6, maxToken
 
   if (!response.ok) {
     const errText = await response.text();
-    // Groq's 429 body includes "Please try again in Xs" — honor that instead
-    // of guessing, so we don't hammer an already-throttled account.
-    if (response.status === 429 && retriesLeft > 0) {
-      const waitMatch = errText.match(/try again in ([\d.]+)s/i);
-      const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1]) * 1000) + 250 : 4000;
-      await sleep(waitMs);
+    // Groq's 429 body includes "Please try again in Xs" (short, per-minute
+    // throttling) or "Please try again in XmY.Zs" (a daily/hourly quota —
+    // the "m" was previously silently dropped, e.g. "27m54s" misread as
+    // "54s"). Only auto-retry short waits; a multi-minute wait means the
+    // quota is actually exhausted, not just momentarily busy — retrying
+    // would hang the request for the full wait instead of failing fast.
+    const waitMatch = errText.match(/try again in (?:(\d+)m)?([\d.]+)s/i);
+    const waitMs = waitMatch ? (parseInt(waitMatch[1] || '0', 10) * 60 + parseFloat(waitMatch[2])) * 1000 : null;
+    if (response.status === 429 && retriesLeft > 0 && waitMs !== null && waitMs <= 10000) {
+      await sleep(waitMs + 250);
       return callGroqDirect({ model, system, user, temperature, maxTokens }, retriesLeft - 1);
     }
-    const err = new Error(`Groq API error ${response.status}: ${errText.slice(0, 300)}`);
+    const err = new Error(
+      response.status === 429
+        ? `Homin is rate-limited right now${waitMs ? ` — try again in about ${Math.ceil(waitMs / 60000) || 1} minute${waitMs > 90000 ? 's' : ''}` : ' — try again shortly'}.`
+        : `Groq API error ${response.status}: ${errText.slice(0, 300)}`
+    );
     err.status = response.status;
     throw err;
   }
@@ -915,7 +924,7 @@ router.put('/topics/:id/toggle-status', (req, res) => {
 // Manual brief trigger for a single topic
 router.post('/topics/:id/trigger-brief', async (req, res) => {
   const ws = req.workspace;
-  const model = req.body.model || 'gpt-oss-20b';
+  const model = req.body.model || 'gpt-oss-120b';
   const region = req.body.region || '';
   const topic = db.prepare('SELECT * FROM becca_topics WHERE id = ? AND workspace = ?').get(req.params.id, ws);
   if (!topic) return res.status(404).json({ error: 'Topic not found' });
@@ -1348,8 +1357,160 @@ router.post('/chat/message', async (req, res) => {
     const chatContext = recentChat.map(m => `${m.role}: ${m.content}`).join('\n');
     const knowledgeContext = kb.toPrompt();
 
-    // Intent detection + response
-    const systemPrompt = `You are Homin, a personal intelligence assistant. You help with research, content creation, and task management.
+    // ═══════════════════════════════════════════
+    // STEP 1: CLASSIFY — a small, focused call whose only job is picking
+    // one action and extracting its params. This used to be one call doing
+    // classification + param extraction + reply writing all at once, with a
+    // ~250-line jungle of regex fallbacks for when that didn't work. Splitting
+    // classification into its own narrow-scope call (and dropping the regex
+    // guessing) is the actual structural fix for misclassification — a small
+    // model does one clear job far more reliably than five at once.
+    // ═══════════════════════════════════════════
+    const classifyPrompt = `You are an intent classifier for Homin, a personal intelligence assistant. Decide which ONE action the user's latest message calls for and extract its parameters. Output ONLY a JSON object — no explanation, no markdown fences, nothing else before or after it.
+
+Everything you know about this user:
+${knowledgeContext || 'Not set up yet.'}
+
+Recent conversation:
+${chatContext}
+
+Actions and params:
+- SEARCH: { "query": "search terms" }
+The query MUST be self-contained and unambiguous on its own — fold in whatever subject/topic "Recent conversation" establishes, don't just lift the latest sentence literally. E.g. if the conversation has been about vehicle documents and the user then says "give me the full list of certificates a police officer will ask for", the query must be something like "compulsory vehicle documents police checkpoint [region]" — NOT "certificates required to become a police officer", which is what the bare sentence looks like out of context. Always include the region from "Primary market/region" in the query when one is set.
+One-off lookup for CURRENT EVENTS or something that changes over time — not general/evergreen knowledge. Trigger phrases: "search for", "look up", "google", "scout", "what's happening with", "any news on", "latest on", "catch me up on" (one-off), "have you heard about", "is there anything new on", "when did this happen", "how recent is this", "what date was that". The last three are follow-ups asking for dates/recency on whatever was just discussed — fold the actual subject from "Recent conversation" into the query per the rule above; don't search for the literal words "this happened".
+DO NOT use SEARCH for general-knowledge, factual, or "what/how/which" questions, or questions about rules/legality you can already answer confidently (e.g. "what documents do I need for X", "according to the law is X required") — even if phrased as "tell me about" or "according to the law". Those are CHAT. A follow-up that continues a topic already in "Recent conversation" is CHAT too, not a fresh SEARCH.
+- BRIEFING: { "topics": ["topic1", "topic2"] } (or empty array for all)
+Digest of tracked topics: "brief me", "give me a briefing", "daily briefing", "what's new today", "catch me up on everything", "summarize my watchlist", "what did I miss", "today's digest".
+- ADD_TOPIC: { "names": ["topic name"], "context": "optional context" }
+Persistent monitoring: "keep tabs on", "keep an eye on", "keep track of", "follow", "track", "monitor", "watch", "add to watchlist", "put on my radar", "start tracking", "give me updates on", "keep me posted on", "notify me about", "stay on top of", "I want to track/follow/watch".
+"names" is ALWAYS an array. If the user names multiple genuinely separate things to track ("track fuel prices and inflation" → two distinct topics), put each in its own array entry. If "and" is part of a single compound concept that only makes sense together ("supply and demand", "salt and pepper industry"), keep it as ONE entry with the full phrase — don't split a phrase that isn't actually two topics.
+- REMOVE_TOPIC: { "name": "topic name" }
+"stop tracking", "stop watching", "remove from watchlist", "unfollow", "no more updates on", "quit tracking", "forget about".
+- PIPELINE: { "topic": "topic or short summary of the content to write about", "tone": "optional tone" }
+Publish intent — an explicit COMMAND to actually create/publish a post right now: "turn this into a blog post", "write this up", "make a blog post from", "blog this", "draft a post on", "publish this as". If the user refers to content just found via SEARCH, use that as the topic.
+DO NOT use PIPELINE for a QUESTION about blogging/writing/content (e.g. "what tone should I use for blog posts", "how do I write a good title") — those are CHAT. PIPELINE is only for a command to actually create a post, never for asking about the practice of writing one.
+- DESIGN: { "companyName": "company name", "notes": "extra context", "mode": "proposal|campaign|canvas|template" }
+Visual/proposal intent: "design a proposal for", "make a proposal for", "build a proposal", "design a canvas", "create a social template", "mock up", "brand this for".
+- REMINDER: { "text": "reminder text", "when": "absolute ISO 8601 date+time resolved from the user's words using the current time (e.g. 'in 10 seconds' → 2026-08-22T18:30:10.000Z)", "when_raw": "the user's original words" }
+"remind me", "remind me to", "nudge me", "set a reminder", "don't let me forget", "ping me about".
+- MEMORY: { "content": "what to remember" }
+"remember that", "keep in mind", "don't forget that", "note that", "make a note", "for future reference".
+- CHAT: {} — the default. Conversation, brainstorming, AND any general-knowledge/factual/how-to/legal question you can answer from what you know, AND any question ABOUT one of the actions above (e.g. "what tone should I use for blog posts" is a question about writing, not a PIPELINE command) rather than a command to actually perform it. When genuinely unsure between two actions, choose CHAT.
+
+Classify the LATEST message on its own terms, based only on what it actually says. Use "Recent conversation" only to resolve pronouns or an implied subject (e.g. "track that" after discussing a topic) — never let the fact that recent turns were CHAT make you default a new, clearly-worded command to CHAT too. If the latest message is an unambiguous instruction ("remind me to X", "track Y", "remember that Z"), classify it as that action regardless of what kind of turn came immediately before it.
+
+Output ONLY: {"action": "ACTION_NAME", "params": { ... }}`;
+
+    const classifyRaw = await callGroq({
+      model,
+      system: classifyPrompt,
+      user: message,
+      temperature: 0.1,
+      maxTokens: 400,
+    });
+
+    let action = 'CHAT';
+    let params = {};
+    try {
+      const cleaned = stripThink(classifyRaw);
+      let jsonStr = null;
+      const codeBlock = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+      if (codeBlock) {
+        try { JSON.parse(codeBlock[1]); jsonStr = codeBlock[1]; } catch {}
+      }
+      if (!jsonStr) {
+        const idx = cleaned.indexOf('{');
+        const end = cleaned.lastIndexOf('}');
+        if (idx !== -1 && end > idx) {
+          const candidate = cleaned.slice(idx, end + 1);
+          try { JSON.parse(candidate); jsonStr = candidate; } catch {}
+        }
+      }
+      if (jsonStr) {
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.action) action = parsed.action;
+        if (parsed.params) params = parsed.params;
+      }
+      // If parsing genuinely fails, action stays 'CHAT' — fail safe into a
+      // direct answer rather than guessing intent from prose.
+    } catch { /* defaults above stand */ }
+
+    // Deterministic guard: a question about writing/blogging isn't a
+    // command to publish one, even when the classifier says PIPELINE — the
+    // one case prompt wording alone didn't reliably fix during testing
+    // (the model kept treating any mention of "blog post" as a command).
+    const looksLikeQuestion = /\?\s*$|^(what|how|why|which|who|is|are|does|do|can|should)\b/i.test(message.trim());
+    const hasCommandVerb = /\b(turn|write|make|draft|create|publish|post|blog|spin|flesh)\b/i.test(message);
+    if (action === 'PIPELINE' && looksLikeQuestion && !hasCommandVerb) {
+      action = 'CHAT';
+    }
+
+    // Deterministic guard: some models (qwen-3.6-27b measurably more than
+    // gpt-oss) fail to fire SEARCH for the clearest, most unambiguous
+    // current-events phrasing ("what's the latest on X", "any news on X"),
+    // defaulting to CHAT and answering from stale/generic knowledge instead
+    // of actually looking it up. These specific phrases are current-events
+    // requests by definition — force SEARCH rather than depend on every
+    // model generalizing the instruction equally well.
+    const explicitNewsPhrase = /\b(?:what'?s the latest (?:on|with)|any news on|latest news on|what'?s happening with|is there anything new on)\b/i.test(message);
+    if (action !== 'SEARCH' && explicitNewsPhrase) {
+      action = 'SEARCH';
+      params = { query: message };
+    }
+
+    // Deterministic guard: an unambiguous "remind me to X <time>" command
+    // was found (in testing) to get classified as CHAT — not because of the
+    // message itself, but because of conversational momentum: ANY preceding
+    // CHAT turn, even a completely unrelated one, biased the very next
+    // classification toward CHAT again, and the model then falsely claimed
+    // to have set a reminder it never created. A second prompt instruction
+    // telling it to judge each message independently didn't fix this
+    // (reproduced on two different models) — this is a plain, high-signal
+    // phrasing a regex can catch reliably where the classifier couldn't.
+    if (action !== 'REMINDER') {
+      const remindMatch = message.match(/^\s*(?:please\s+)?remind me to\s+(.+?)(?:\s+((?:tomorrow|today|tonight|next\s+\w+|on\s+\w+|in\s+\d+\s*\w+|at\s+\d).*))?$/i);
+      if (remindMatch) {
+        action = 'REMINDER';
+        params = { text: remindMatch[1].trim(), when_raw: (remindMatch[2] || '').trim() };
+      }
+    }
+
+    // Deterministic guard: negation ("don't track X, I'm not interested")
+    // was found firing REMOVE_TOPIC — the classifier reasonably read "track"
+    // as the signal but missed that "don't" flips it into a decline, not an
+    // instruction. Since the user never had X tracked, REMOVE_TOPIC's own
+    // "not found" reply also came out confusing (an error for an action the
+    // user never asked for in the first place). If the message negates
+    // right before a track/remind/remember verb, it's a decline — CHAT.
+    if ((action === 'ADD_TOPIC' || action === 'REMOVE_TOPIC' || action === 'REMINDER' || action === 'MEMORY')
+      && /\b(don'?t|do not|no need to|not interested in|please don'?t)\s+\w*\s*(track|watch|monitor|follow|remind|remember)/i.test(message)) {
+      action = 'CHAT';
+    }
+
+    // Compound intent: "keep tabs on X and search for it now" — testing
+    // found the classifier doesn't reliably pick ADD_TOPIC here at all (the
+    // same core phrase works alone; appending "and search..." derailed it
+    // into CHAT with a hallucinated answer instead of either action). Rather
+    // than trust the classifier to land on ADD_TOPIC first, detect this
+    // specific compound pattern directly from the raw message and force it
+    // — same reasoning as the REMINDER guard: a plain, high-signal phrasing
+    // a regex catches reliably where the classifier didn't.
+    const compoundMatch = message.match(/\b(?:keep tabs on|keep an eye on|keep track of|track|monitor|watch|follow)\s+(.+?)\s+and\s+(?:also\s+)?(?:search|look\s*up|find out|check)\b/i);
+    if (compoundMatch) {
+      action = 'ADD_TOPIC';
+      params = { names: [compoundMatch[1].trim()] };
+    }
+    const wantsImmediateSearch = action === 'ADD_TOPIC'
+      && /\b(search|look\s*up|find out|check now|right now|run a search)\b/i.test(message);
+
+    let reply;
+    let actionResult = null;
+    if (action === 'CHAT') {
+      // STEP 2 (CHAT only): a separate, focused call to actually answer —
+      // kept apart from classification so its formatting rules (yes/no
+      // lead, no citations, region-grounding) aren't competing with 9
+      // action definitions for the model's attention in the same call.
+      const answerPrompt = `You are Homin, a personal intelligence assistant. Answer the user's message directly and helpfully.
 
 Everything you know about this user:
 ${knowledgeContext || 'Not set up yet — ask about their company if relevant.'}
@@ -1357,296 +1518,55 @@ ${knowledgeContext || 'Not set up yet — ask about their company if relevant.'}
 Recent conversation:
 ${chatContext}
 
-You have these capabilities:
-- SEARCH/RESEARCH: Search the web for CURRENT NEWS on a topic — recent, evolving, time-sensitive information only. Not for general/evergreen knowledge.
-- BRIEFING: Generate a briefing on tracked topics
-- ADD_TOPIC: Add a new topic to the watchlist
-- REMOVE_TOPIC: Remove a topic from the watchlist
-- PIPELINE: Run the content pipeline (scout → write → image → seo)
-- REMINDER: Set a reminder
-- MEMORY: Remember something important
-- CHAT: Have a conversation, OR answer any general-knowledge/factual/how-to question directly from what you already know (e.g. "what documents do I need for X", "how does Y work") — this is the default for anything that isn't current-events, isn't a watchlist/reminder/memory action, and isn't asking you to write content. When in doubt between SEARCH and CHAT, prefer CHAT and answer directly.
+Be concise and natural — plain text, no JSON.
+When your answer is naturally a list (steps, requirements, documents, options), give a clean, confident, directly-stated list — no inline source citations or "(Source — date)" tags; this is your own knowledge, not a digest of sources.
+If the user asks a yes/no question, START with a direct "Yes" or "No" (or the closest honest equivalent, e.g. "Usually, but...") as its own first sentence — a breakdown or caveats can follow after.
+When "Primary market/region" above is set and the question is about local rules, requirements, documents, or law, answer specific to that country's actual system — not a generic or US-centric list. If you're not confident about that region's exact requirements, say so plainly rather than presenting a generic answer as region-specific.`;
 
-CRITICAL RULES:
-1. ALWAYS respond with a JSON action block. NEVER respond with just plain text.
-2. NEVER say "I'll search", "I'll look up", "I'll find" without actually emitting a SEARCH action.
-3. NEVER say "I'll turn this into a blog post" without actually emitting a PIPELINE action.
-4. Your reply field is shown to the user AFTER the action completes. Write it as if the action already happened.
-5. If the user asks you to do something, you MUST emit the corresponding JSON action. Talking about doing it is NOT the same as doing it.
-
-Format your ENTIRE response as:
-{
-  "action": "ACTION_TYPE",
-  "params": { ... },
-  "reply": "Your natural language response to the user"
-}
-
-IMPORTANT: When the user says things like "turn this into a blog post", "write this up", "make an article from this", or refers to content you just found via SEARCH, use the PIPELINE action with the topic extracted from that content. Do NOT ask the user to paste content again — use the search results from the conversation above.
-
-Action types and params:
-- SEARCH: { "query": "search terms" }
-IMPORTANT: One-off lookup for CURRENT EVENTS or something that changes over time — not general/evergreen knowledge you already know. These all mean SEARCH: "search for", "look up", "google", "scout", "what's happening with", "what's going on with", "any news on", "latest on", "update on" (one-off), "what's the latest with", "catch me up on" (one-off), "have you heard about", "did you see", "is there anything new on". Emit SEARCH JSON.
-DO NOT use SEARCH for general-knowledge, factual, or "what/how/which" questions you can already answer confidently (e.g. "what documents do I need for X", "how does Y work", "what are the requirements for Z", "explain X") — even if the phrasing includes "tell me about" or "find out". Those are CHAT. Only use SEARCH when the user is explicitly asking about something recent, evolving, or newsworthy that requires up-to-date information you wouldn't already know.
-- BRIEFING: { "topics": ["topic1", "topic2"] } (or empty array for all)
-IMPORTANT: Digest of tracked topics. These all mean BRIEFING: "brief me", "give me a briefing", "daily briefing", "morning brief", "what's new today", "what's new with my topics", "catch me up on everything", "summarize my watchlist", "run the brief", "what did I miss", "overnight update", "today's digest", "briefing on", "update on all my topics". Emit BRIEFING JSON.
-- ADD_TOPIC: { "name": "topic name", "context": "optional context" }
-IMPORTANT: Persistent monitoring. These ALL mean ADD_TOPIC — emit JSON, don't just describe: "keep tabs on", "keep an eye on", "keep track of", "keep watch on", "follow", "follow up on", "track", "monitor", "watch", "watch out for", "scout for", "look into for me going forward", "check in on regularly", "check up on", "add to watchlist", "add to radar", "put on my radar", "on my radar", "start tracking", "start following", "start monitoring", "set up tracking", "give me updates on", "send me updates on", "keep me posted on", "keep me updated on", "keep me informed on", "keep me in the loop on", "let me know about going forward", "notify me about", "alert me about", "alert me when", "fill me in on going forward", "stay on top of", "stay updated on", "I want to track", "I want to follow", "I wanna watch", "can you watch", "could you monitor", "from now on watch", "going forward track", "eyes on", "keep an eye out for". NEVER just say you'll add it — actually emit the ADD_TOPIC JSON.
-- REMOVE_TOPIC: { "name": "topic name" }
-IMPORTANT: These ALL mean REMOVE_TOPIC — emit JSON: "stop tracking", "stop watching", "stop monitoring", "stop following", "remove from watchlist", "take off watchlist", "unfollow", "I don't care about anymore", "no longer interested in", "take off my radar", "off my radar", "no more updates on", "don't watch anymore", "quit tracking", "pause tracking on", "drop", "remove", "forget about". Actually emit the REMOVE_TOPIC JSON.
-- PIPELINE: { "topic": "topic name or short summary of the content to turn into a post", "tone": "optional tone" }
-IMPORTANT: Publish intent. These ALL mean PIPELINE: "turn this into a blog", "turn this into a post", "write this up", "write a blog post about", "make a blog post from", "blog this", "draft a post on", "create an article on", "make an article from", "publish this as", "post about this", "expand this into a post", "flesh this out", "make this a blog", "spin this into content", "can you blog about", "let's make this a post". Emit PIPELINE JSON.
-- DESIGN: { "companyName": "company name", "notes": "extra context", "mode": "proposal|campaign|canvas|template" }
-IMPORTANT: Visual/proposal intent. These ALL mean DESIGN: "design a proposal for", "make a proposal for", "create a proposal for", "pitch for", "deck for", "proposal to", "build a proposal", "design a canvas", "make a canvas", "create a social template", "design a hero image", "mock up", "mockup for", "layout for", "brand this for". Emit DESIGN JSON.
-- REMINDER: { "text": "reminder text", "when": "absolute date+time resolved from the user's words as an ISO 8601 string (e.g. 'in 10 seconds' → 2026-08-22T18:30:10.000Z). ALWAYS resolve relative times using the current time.", "when_raw": "the user's original words, e.g. 'in 10 seconds'" }
-IMPORTANT: These all mean REMINDER: "remind me", "remind me to", "nudge me", "ping me about", "set a reminder", "set an alarm for", "don't let me forget", "buzz me", "poke me about". Emit REMINDER JSON.
-- MEMORY: { "content": "what to remember" }
-IMPORTANT: These all mean MEMORY: "remember that", "remember this", "keep in mind", "don't forget that", "note that", "make a note", "store that", "save that", "for future reference", "from now on remember". Emit MEMORY JSON.
-- CHAT: {} (no params needed)
-IMPORTANT: Free-form thinking AND general/factual knowledge questions. These all mean CHAT — no side-effect: "brainstorm", "jam on", "spitball", "think through", "talk through", "what do you think about", "ideas for", "help me decide", "pros and cons of", "weigh in on", "chat about", "just wondering", "quick question", "explain", "what's your take", "how would you approach", "let's think out loud", plus any factual/definitional/how-to question ("what documents do I need for X", "what are the requirements for Y", "how do I Z"). Emit CHAT JSON and just answer directly from what you know.
-
-If it's just a conversation, use CHAT with an empty params object.
-Always reply naturally and helpfully. Be concise.
-When a CHAT answer is naturally a list (steps, requirements, documents, options), give a clean, confident, directly-stated list — no inline source citations or "(Source — date)" tags. Citations belong only in SEARCH/BRIEFING results, which draw from specific articles; a CHAT answer is your own knowledge, not a digest of sources.`;
-
-    const response = await callGroq({
-      model,
-      system: systemPrompt,
-      user: message,
-      temperature: 0.6,
-      maxTokens: 2048,
-    });
-
-    const rawResponse = response;
-
-    const text = stripThink(rawResponse);
-
-    // Parse action from RAW response (JSON may follow unclosed think block)
-    let actionResult = null;
-    let reply = text;
-    try {
-      let jsonStr = null;
-      // First try: JSON in a code block
-      const codeBlock = rawResponse.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-      if (codeBlock) {
-        try { JSON.parse(codeBlock[1]); jsonStr = codeBlock[1]; } catch {}
-      }
-      // Second try: find balanced JSON objects that contain "action"
-      if (!jsonStr) {
-        let pos = 0;
-        while (pos < rawResponse.length) {
-          const idx = rawResponse.indexOf('{', pos);
-          if (idx === -1) break;
-          let depth = 0; let end = -1;
-          for (let i = idx; i < rawResponse.length; i++) {
-            if (rawResponse[i] === '{') depth++;
-            else if (rawResponse[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
-          }
-          if (end > idx) {
-            const candidate = rawResponse.slice(idx, end + 1);
-            try {
-              const parsed = JSON.parse(candidate);
-              if (parsed && parsed.action) { jsonStr = candidate; break; }
-            } catch {}
-            pos = end + 1;
-          } else break;
+      const answerRaw = await callGroq({
+        model,
+        system: answerPrompt,
+        user: message,
+        temperature: 0.6,
+        maxTokens: 2048,
+      });
+      reply = stripThink(answerRaw);
+    } else {
+      // ADD_TOPIC's schema asks the classifier for a "names" array so it can
+      // make the actual judgment call on "track X and Y" (two topics) vs.
+      // "supply and demand" (one compound concept) — that distinction needs
+      // real semantic understanding a regex doesn't have. A blind split on
+      // "and" was tried first and over-split legitimate compound names.
+      // Only fall back to a mechanical split if the classifier still
+      // returned a single "and"-joined name instead of an array.
+      let paramsList = [params];
+      if (action === 'ADD_TOPIC') {
+        if (Array.isArray(params.names) && params.names.length > 0) {
+          paramsList = params.names.map((name) => ({ ...params, name }));
+        } else if (params.name) {
+          const candidates = String(params.name)
+            .split(/\s*,\s*|\s+and\s+|\s*&\s*/i)
+            .map((s) => s.trim())
+            .filter(Boolean);
+          paramsList = candidates.length > 1 ? candidates.map((name) => ({ ...params, name })) : [params];
         }
       }
-      if (jsonStr) {
-        const parsed = JSON.parse(jsonStr);
-        reply = stripThink(parsed.reply || text);
-        if (parsed.action && parsed.action !== 'CHAT') {
-          actionResult = await executeAction(parsed.action, parsed.params || {}, ws, model, kb.region, req.headers.authorization);
-        }
+      const results = [];
+      for (const p of paramsList) {
+        results.push(await executeAction(action, p, ws, model, kb.region, req.headers.authorization));
       }
-    } catch {}
-
-    // Compound intent: "run a search now and keep tabs on X" → do BOTH
-    if (!actionResult) {
-      const lower = message.toLowerCase();
-      const hasAdd = /(keep tabs on|keep an eye on|keep track of|add to watchlist|put on.*radar|track|monitor|watch)/i.test(lower);
-      const hasSearch = /(run a search|search|look up|find|google|research|check)/i.test(lower);
-      if (hasAdd && hasSearch) {
-        const ADD_PHRASES_COMPOUND = [
-          'keep tabs on', 'keep an eye on', 'keep track of', 'keep watching',
-          'stay on top of', 'stay updated on', 'follow up on', 'follow', 'track', 'monitor', 'watch',
-          'add to (?:my )?watchlist', 'put on (?:my )?(?:radar|watchlist)',
-        ].join('|');
-        const m = lower.match(new RegExp(`(?:(?:${ADD_PHRASES_COMPOUND}))(?:\\s+(?:on|about|for))?\\s+(.+)`, 'i'));
-        if (m) {
-          let topicName = m[1].replace(/[✦,.!?]+$/g, '').replace(/\s+(?:and|then).*$/i, '').trim();
-          // strip trailing "now and..." prefix contamination
-          topicName = topicName.replace(/^now\s+/, '').trim();
-          if (topicName) {
-            const addRes = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region, req.headers.authorization);
-            const searchRes = await executeAction('SEARCH', { query: topicName }, ws, model, kb.region, req.headers.authorization);
-            actionResult = `${addRes}\n\n${searchRes}`;
-            reply = actionResult;
-          }
-        }
-      }
-    }
-
-    // Follow-up temporal: "when did this happen?" → answer with dates from last topic
-    if (!actionResult) {
-      const lowerWhen = message.toLowerCase();
-      if (/when did (?:this|that|it) happen|when was (?:this|that|it)|how recent is this|what date/i.test(lowerWhen)) {
-        const lastTopic = (kb.topics && kb.topics.length ? kb.topics[kb.topics.length - 1].name : '') || db.prepare('SELECT name FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY updated_at DESC LIMIT 1').get(ws, 'active')?.name || '';
-        if (lastTopic) {
-          try {
-            const items = await fetchTopicNews(lastTopic, kb.region || '', 5);
-            if (items.length) {
-              const dated = items.map(i => `- ${i.title} [${i.source}${i.date ? ' — ' + i.date : ''}]`).join('\n');
-              actionResult = `For "${lastTopic}":\n${dated}`;
-              reply = actionResult;
-            }
-          } catch {}
-        }
-      }
-    }
-
-    // Fallback: if AI didn't emit a JSON action, detect intent from user message
-    if (!actionResult) {
-      const lower = message.toLowerCase();
-
-      // ── REMOVE_TOPIC ──
-      const REMOVE_PHRASES = 'stop (?:tracking|watching|monitoring)|remove|unfollow|no more updates on|I don\'t care about|take (?:off|away)';
-      const removeMatch = lower.match(new RegExp(`(?:(?:${REMOVE_PHRASES}))\\s+(.+?)(?:\\s+anymore|\\s+from (?:my )?(?:watchlist|radar|tracking)|[.!?]|$)`, 'i'));
-      if (removeMatch) {
-        let topicName = removeMatch[1].replace(/[.!?]+$/, '').trim();
-        if (topicName) {
-          actionResult = await executeAction('REMOVE_TOPIC', { name: topicName }, ws, model, kb.region, req.headers.authorization);
-          reply = actionResult;
-        }
-      }
-
-      // ── ADD_TOPIC ──
-      if (!actionResult) {
-        const ADD_PHRASES = [
-          'keep tabs on', 'keep an eye on', 'keep track of', 'keep watching',
-          'stay on top of', 'stay updated on', 'stay abreast of', 'stay vigilant about',
-          'follow up on', 'follow', 'track', 'monitor', 'watch', 'watching',
-          'scout for', 'look into', 'check in on', 'check up on',
-          'add to (?:my )?watchlist', 'put on (?:my )?(?:radar|watchlist)',
-          'start tracking (?:for )?', 'set up tracking (?:for )?',
-          'give me updates on', 'give me alerts on', 'give me news on',
-          'send me updates on', 'send me alerts on',
-          'every time.*news.*on', 'whenever.*updates?.*on',
-          'I want to (?:stay updated|track|follow|monitor|watch) on?',
-          'I\'d like to (?:stay updated|track|follow|monitor|watch) on?',
-          'I need to (?:stay updated|track|follow|monitor|watch) on?',
-          'keep me posted on', 'keep me updated on', 'keep me informed on',
-          'let me know about', 'let me know when', 'let me know if',
-          'notify me about', 'notify me of', 'notify me on',
-          'alert me about', 'alert me to',
-          'fill me in on',
-          'don\'t let me miss', 'not letting.*slip',
-          'keeping a pulse on', 'keeping an ear to the ground on',
-          'making sure nothing.*with',
-        ].join('|');
-        const addMatch = lower.match(new RegExp(`(?:(?:${ADD_PHRASES}))(?:\\s+(?:on|about|for))?\\s+(.+)`, 'i'));
-        if (addMatch) {
-          let topicName = addMatch[1].replace(/[.!?]+$/, '')
-            .replace(/\s+(?:going forward|for me|regularly|from now on).*$/i, '').trim();
-          if (topicName) {
-            actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region, req.headers.authorization);
-            reply = actionResult;
-          }
-        }
-      }
-    }
-    if (!actionResult) {
-      const lower = message.toLowerCase();
-      const searchMatch = lower.match(/(?:search|look up|find|google|research|check)\s+(?:for\s+)?(.+)/i);
-      if (searchMatch) {
-        const query = searchMatch[1].replace(/[.!?]+$/, '').trim();
-        actionResult = await executeAction('SEARCH', { query }, ws, model, kb.region, req.headers.authorization);
-        reply = actionResult;
-      }
-    }
-    if (!actionResult) {
-      const lower = message.toLowerCase();
-      const pipelineMatch = lower.match(/(?:turn|make|write|create|convert)\s+(?:this|that|it|the(?:se)?\s+results?)\s+(?:into|as|to)\s+(?:a\s+)?(?:blog\s*post|article|post|draft|content)/i);
-      if (pipelineMatch) {
-        const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region, req.headers.authorization);
-        reply = actionResult;
-      }
-    }
-
-    // Last resort: if model said it would do something but didn't emit JSON, detect from reply text
-    if (!actionResult) {
-      const replyLower = (reply || '').toLowerCase();
-      const msgLower = message.toLowerCase();
-
-      // Detect ADD_TOPIC intent from reply text (AI often claims it added but didn't emit JSON)
-      const replyAddMatch = replyLower.match(/(?:added|adding|started|set up)\s+(?:a\s+)?(?:watch|topic|track(?:ing)?|monitor(?:ing)?)\s+(?:on|for)\s+(.+?)(?:\.|,|\s+to your|\s+i'll|\s+covering)/i)
-        || replyLower.match(/(?:added|adding)\s+["""]?(.+?)["""]?\s+to\s+(?:your\s+)?(?:watchlist|track(?:ing)?)?/i)
-        || replyLower.match(/(?:i(?:'ve| have))\s+(?:added|set up|started)\s+(?:a\s+)?(?:watch|track(?:ing)?|monitor(?:ing)?)\s+(?:on|for)\s+(.+?)(?:\.|,|\s+to your|\s+i'll)/i)
-        || replyLower.match(/(?:got it|okay|sure|alright)[.!]?\s+(?:i(?:'ve| have))?\s*(?:added|tracking|monitoring|watching)\s+(.+)/i);
-
-      // Build same ADD_PHRASES list for msg matching
-      const _ADD = [
-        'keep tabs on', 'keep an eye on', 'keep track of', 'keep watching',
-        'stay on top of', 'stay updated on', 'stay abreast of', 'stay vigilant about',
-        'follow up on', 'follow', 'track', 'monitor', 'watch', 'watching',
-        'scout for', 'look into', 'check in on', 'check up on',
-        'add to (?:my |your )?watchlist', 'put on (?:my )?(?:radar|watchlist)',
-        'start tracking (?:for )?', 'set up tracking (?:for )?',
-        'give me updates on', 'send me updates on',
-        'keep me posted on', 'keep me updated on', 'keep me informed on',
-        'let me know about', 'let me know when', 'let me know if',
-        'notify me about', 'notify me of', 'alert me about', 'alert me to',
-        'fill me in on', "don't let me miss",
-      ].join('|');
-      const msgAddMatch = msgLower.match(new RegExp(`(?:(?:${_ADD}))(?:\\s+(?:on|about|for))?\\s+(.+)`, 'i'));
-
-      if (replyAddMatch || msgAddMatch) {
-        let topicName = (replyAddMatch?.[1] || msgAddMatch?.[1] || '').replace(/[.!?]+$/, '').replace(/["""]/g, '').trim();
-        // Clean up common trailing phrases
-        topicName = topicName.replace(/\s+(?:covering|including|and related|related).+$/i, '').trim();
-        if (topicName) {
-          actionResult = await executeAction('ADD_TOPIC', { name: topicName, context: `User requested to track: ${message}` }, ws, model, kb.region, req.headers.authorization);
-          reply = actionResult;
-        }
-      }
-
-      // Detect SEARCH intent from model's reply or user message
-      const wantsSearch = /(?:search|look\s*up|find|google|research|check)\s+(?:for\s+)?/i.test(replyLower)
-        || /(?:search|look\s*up|find|google|research|check)\s+(?:for\s+)?/i.test(msgLower);
-      // Detect PIPELINE intent
-      const wantsPipeline = /(?:blog\s*post|article|turn.*into|create.*post|write.*up|pipeline)/i.test(replyLower)
-        || /(?:turn|make|write|create|convert)\s+(?:this|that|it|the)/i.test(msgLower);
-
-      if (wantsSearch) {
-        // Extract just the search query, stripping pipeline-related text
-        let query = message.replace(/^(?:search|look up|find|google|research|check)\s+(?:for\s+)?/i, '').replace(/[.!?]+$/, '').trim();
-        query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
-        actionResult = await executeAction('SEARCH', { query: query || message }, ws, model, kb.region, req.headers.authorization);
-        reply = actionResult;
-      }
-      // If user also wants pipeline after search, queue it
-      if (wantsPipeline && wantsSearch) {
+      if (wantsImmediateSearch && paramsList[0]?.name) {
         try {
-          const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-          const pipelineResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region, req.headers.authorization);
-          reply += '\n\n' + pipelineResult;
-          actionResult = pipelineResult;
-        } catch { /* pipeline may fail if server self-call times out */ }
-      } else if (wantsPipeline && !wantsSearch) {
-        const recentTopic = recentChat.filter(m => m.role === 'assistant').map(m => m.content).join(' ').slice(0, 200);
-        actionResult = await executeAction('PIPELINE', { topic: recentTopic || message }, ws, model, kb.region, req.headers.authorization);
-        reply = actionResult;
+          results.push(await executeAction('SEARCH', { query: paramsList[0].name }, ws, model, kb.region, req.headers.authorization));
+        } catch { /* the ADD_TOPIC already succeeded — don't fail the whole reply over the bonus search */ }
       }
+      actionResult = results.join('\n');
+      // executeAction should always return a string, but never let a gap
+      // there (an unimplemented action, an unexpected falsy return) crash
+      // the whole request — degrade to a plain message instead.
+      reply = actionResult || `Something went wrong running that (${action}).`;
     }
 
-    // Append action result to reply if any
-    if (actionResult) {
-      actionResult = actionResult.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>/gi, '').trim();
-      // Use action result directly — model's reply is usually just a promise like "I'll search..."
-      reply = actionResult;
-    }
-
-    // Strip <think>...</think> tags from final reply (handle unclosed tags)
     reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>/gi, '').trim();
 
     // Save assistant response
@@ -1668,8 +1588,14 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
         let name = (params.name || '').trim().replace(/^[✦•\-–—\s]+|[✦•,.!?;\s]+$/g, '').trim();
         if (!name) return 'Could not add topic — no name provided.';
         const stripped = name.toLowerCase().replace(/[,.;!?]+$/g, '');
-        const existing = db.prepare('SELECT id, normalized_topic FROM becca_topics WHERE workspace = ? AND status = ?').all(ws, 'active').find(r => r.normalized_topic.toLowerCase().replace(/[,.;!?]+$/g, '') === stripped);
-        if (existing) return `Topic "${name}" is already on your watchlist.`;
+        // Exact match first, then fuzzy in both directions — otherwise
+        // "track fuel prices" after "fuel prices in Nigeria" is already
+        // tracked creates a near-duplicate instead of being recognized.
+        const activeTopics = db.prepare('SELECT id, name, normalized_topic FROM becca_topics WHERE workspace = ? AND status = ?').all(ws, 'active')
+          .map((r) => ({ ...r, cleaned: r.normalized_topic.toLowerCase().replace(/[,.;!?]+$/g, '') }));
+        const existing = activeTopics.find((r) => r.cleaned === stripped)
+          || activeTopics.find((r) => r.cleaned.includes(stripped) || stripped.includes(r.cleaned));
+        if (existing) return `"${existing.name}" is already on your watchlist.`;
         const id = newId();
         const now = nowIso();
         const maxOrder = db.prepare('SELECT MAX(sort_order) as mx FROM becca_topics WHERE workspace = ?').get(ws);
@@ -1680,10 +1606,18 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
       }
       case 'REMOVE_TOPIC': {
         const name = (params.name || '').trim();
-        const topic = db.prepare('SELECT id FROM becca_topics WHERE workspace = ? AND LOWER(normalized_topic) = LOWER(?) AND status = ?').get(ws, name, 'active');
+        if (!name) return 'No topic name provided.';
+        // Exact match first, then fuzzy in both directions — the model's
+        // extracted name is often a trimmed-down version of the real topic
+        // ("fuel prices" for a topic actually named "fuel prices in
+        // Nigeria"), and exact-only matching silently failed on that.
+        const target = name.toLowerCase();
+        const active = db.prepare('SELECT id, name, normalized_topic FROM becca_topics WHERE workspace = ? AND status = ?').all(ws, 'active');
+        const topic = active.find((t) => t.normalized_topic === target)
+          || active.find((t) => t.normalized_topic.includes(target) || target.includes(t.normalized_topic));
         if (!topic) return `Topic "${name}" not found on your watchlist.`;
         db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run('paused', nowIso(), topic.id);
-        return `Removed "${name}" from your watchlist.`;
+        return `Stopped tracking "${topic.name}" (paused, not deleted — you can resume it from the Watchlist).`;
       }
       case 'MEMORY': {
         const content = (params.content || '').trim();
@@ -1740,6 +1674,31 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
         query = query.replace(/\s+(?:and|then|also)\s+(?:turn|make|write|create|convert)\s+(?:this|that|it|the)?\s*(?:into|to|as)?\s*(?:a\s+)?(?:blog\s*post|article|post|draft|content|pipeline).*$/i, '').trim();
         query = query.replace(/\s*[-–—]\s*(?:turn|make|write|create|convert)\s+.*$/i, '').trim();
         const regionQuery = (params.region || region || '').trim();
+
+        // Prefer Tavily — real web search built for grounding LLM answers
+        // (returns extracted page content and often a synthesized answer),
+        // which actually fixes reference/factual questions instead of just
+        // reshuffling news-article snippets. Falls back to the Google News
+        // scrape below if Tavily isn't configured or the call fails.
+        if (isTavilyAvailable()) {
+          try {
+            const tavily = await tavilySearch(query, { region: regionQuery, maxResults: 5 });
+            if (tavily && (tavily.answer || tavily.results.length)) {
+              const sources = tavily.results.slice(0, 4)
+                .map((r) => {
+                  let domain = '';
+                  try { domain = new URL(r.url).hostname.replace(/^www\./, ''); } catch { /* malformed url, omit domain */ }
+                  return domain ? `- ${r.title} (${domain})` : `- ${r.title}`;
+                })
+                .join('\n');
+              return [tavily.answer, sources ? `\nSources:\n${sources}` : '']
+                .filter(Boolean).join('\n').trim();
+            }
+          } catch (err) {
+            console.error('[SEARCH] Tavily failed, falling back to news scrape:', err.message);
+          }
+        }
+
         let items;
         try {
           items = await fetchTopicNews(query, regionQuery, 5);
@@ -1818,8 +1777,13 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
         }
         return summary;
       }
+      case 'DESIGN':
+        // Classified but not implemented here — chat can't create a design
+        // proposal/canvas directly (that flow lives in the Design/Proposals
+        // sections), so be honest about it instead of silently no-op'ing.
+        return "I can't create a design directly from chat yet — head to the Proposals or Design section to start one.";
       default:
-        return null;
+        return `I'm not able to do that yet ("${action}").`;
     }
   } catch (err) {
     return `Action failed: ${err.message}`;

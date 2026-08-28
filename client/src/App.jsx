@@ -119,7 +119,7 @@ export default function App() {
   const [beccaBriefings, setBeccaBriefings] = useState([]);
   const [beccaSettings, setBeccaSettings] = useState({ dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00' });
   const [beccaSettingsOpen, setBeccaSettingsOpen] = useState(false);
-  const [beccaModel, setBeccaModel] = useState(() => localStorage.getItem('homin:model') || 'gpt-oss-20b');
+  const [beccaModel, setBeccaModel] = useState(() => localStorage.getItem('homin:model') || 'gpt-oss-120b');
   const [showCompanySetup, setShowCompanySetup] = useState(false);
   const [setupPhase, setSetupPhase] = useState(null); // null | 'saving' | 'complete'
   const [chatGreeting, setChatGreeting] = useState('');

@@ -151,7 +151,7 @@ async function generateGroq({ prompt, apiKey, model }) {
     // Kept in sync with the Groq models actually available to this account
     // (see GROQ_MODELS in routes/becca.js) — llama-3.3/llama-4 model IDs
     // that used to work here have since been removed from Groq's catalog.
-    model: model || 'openai/gpt-oss-20b',
+    model: model || 'openai/gpt-oss-120b',
     messages: [
       {
         role: 'system',
@@ -235,7 +235,7 @@ export async function generateText(prompt, { provider: providerOverride, model }
     const { default: Groq } = await import('groq-sdk');
     const client = new Groq({ apiKey });
     const response = await client.chat.completions.create({
-      model: model || 'openai/gpt-oss-20b',
+      model: model || 'openai/gpt-oss-120b',
       messages: [{ role: 'system', content: 'You are an expert content strategist. Return only valid JSON, no markdown.' }, { role: 'user', content: prompt }],
       temperature: 0.7,
       max_tokens: 1500,

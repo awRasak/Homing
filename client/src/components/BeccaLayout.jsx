@@ -160,7 +160,7 @@ function PanelWatchlist({ topics, onAddTopic, onRemoveTopic, onUpdateTopic, work
   async function handleBriefNow(topic) {
     setBriefingTopic(topic.id);
     try {
-      const res = await api.becca.triggerTopicBrief(topic.id, { workspace, model: beccaModel || 'gpt-oss-20b', region: settings?.country || '' });
+      const res = await api.becca.triggerTopicBrief(topic.id, { workspace, model: beccaModel || 'gpt-oss-120b', region: settings?.country || '' });
       alert(res.summary || 'Briefing complete');
     } catch (err) {
       alert('Briefing failed: ' + err.message);
