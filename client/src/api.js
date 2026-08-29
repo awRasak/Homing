@@ -481,4 +481,27 @@ export const api = {
         method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody({ dataUrl }),
       }).then(handle),
   },
+
+  chatwoot: {
+    getConversations: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return fetch(`${BASE}/chatwoot/conversations${qs ? '?' + qs : ''}`, { headers: authHeaders() }).then(handle);
+    },
+    getMessages: (id) =>
+      fetch(`${BASE}/chatwoot/conversations/${id}/messages`, { headers: authHeaders() }).then(handle),
+    sendReply: (id, content) =>
+      fetch(`${BASE}/chatwoot/conversations/${id}/reply`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody({ content }),
+      }).then(handle),
+    postPrivateNote: (id, content) =>
+      fetch(`${BASE}/chatwoot/conversations/${id}/private-note`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody({ content }),
+      }).then(handle),
+    getSettings: () =>
+      fetch(`${BASE}/chatwoot/settings`, { headers: authHeaders() }).then(handle),
+    saveSettings: (data) =>
+      fetch(`${BASE}/chatwoot/settings`, {
+        method: 'PUT', headers: authHeaders({ 'Content-Type': 'application/json' }), body: jsonBody(data),
+      }).then(handle),
+  },
 };

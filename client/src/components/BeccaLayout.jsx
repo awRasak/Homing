@@ -4,6 +4,7 @@ import BeccaChat from './BeccaChat';
 import CalendarPicker from './CalendarPicker';
 import { renderMarkdown } from './PostPreviewPage';
 import { RunPipelineModal, PostCard, EditPostModal, AnnounceModal } from './ContentPipeline';
+import InboxPanel from './InboxPanel';
 
 function formatSessionDate(dateStr) {
   const d = new Date(dateStr);
@@ -639,6 +640,7 @@ function esc(s) {
 
 const TABS = [
   { key: 'chat', icon: '/icons/chat.png', label: 'Chat' },
+  { key: 'inbox', icon: '/icons/mail.png', label: 'Inbox' },
   { key: 'watchlist', icon: '/icons/watchlist.png', label: 'Watchlist' },
   { key: 'briefings', icon: '/icons/briefings.png', label: 'Briefings' },
   { key: 'pipeline', icon: '/icons/pipeline.png', label: 'Pipeline' },
@@ -686,6 +688,7 @@ export default function BeccaLayout({
   // something (a reminder from chat, a new topic, a fresh briefing…).
   const tabCounts = {
     chat: null,
+    inbox: null,
     watchlist: topics.filter(t => t.status !== 'paused').length,
     briefings: briefings.length,
     pipeline: null,
@@ -716,6 +719,9 @@ export default function BeccaLayout({
             <PanelSessions workspace={workspace} activeSession={activeSession}
               onSelectSession={setActiveSession}
               onNewSession={(id) => setActiveSession(id)} />
+          )}
+          {activeTab === 'inbox' && (
+            <InboxPanel />
           )}
           {activeTab === 'watchlist' && (
             <PanelWatchlist topics={topics} onAddTopic={onAddTopic}

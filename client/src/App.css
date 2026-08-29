@@ -8721,3 +8721,33 @@ input.input-main:focus {
   box-sizing: border-box;
 }
 .autopilot-input:focus { outline: none; border-color: #c8f000; }
+
+/* ── Inbox (Chatwoot) ── */
+.inbox-panel { display: flex; flex-direction: column; gap: 12px; height: 100%; overflow: hidden; }
+.inbox-list { background: var(--surface); border: 1.5px solid var(--grey-border); border-radius: 12px; padding: 10px; }
+.inbox-list-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.inbox-convos { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.inbox-convo { padding: 8px 10px; border-radius: 10px; cursor: pointer; border: 1.5px solid transparent; transition: all 0.15s; }
+.inbox-convo:hover { background: var(--surface2); border-color: var(--grey-border); }
+.inbox-convo.active { background: var(--green-soft); border-color: var(--green-dark); }
+.inbox-convo-name { font-size: 0.875rem; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-convo-preview { font-size: 0.75rem; color: var(--grey-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.inbox-convo-meta { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
+.inbox-status { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; background: var(--grey-pale); color: var(--grey-mid); padding: 1px 6px; border-radius: 999px; }
+.inbox-unread { font-size: 0.65rem; background: var(--green); color: var(--green-text); padding: 1px 6px; border-radius: 999px; font-weight: 700; }
+.inbox-detail { background: var(--surface); border: 1.5px solid var(--grey-border); border-radius: 12px; padding: 12px; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.inbox-detail-head { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 10px; border-bottom: 1px solid var(--grey-border); margin-bottom: 10px; }
+.inbox-detail-name { font-size: 0.92rem; font-weight: 700; color: var(--ink); }
+.inbox-detail-sub { font-size: 0.75rem; color: var(--grey-mid); }
+.inbox-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; max-height: 260px; }
+.inbox-msg { padding: 8px 10px; border-radius: 10px; font-size: 0.82rem; line-height: 1.5; }
+.inbox-msg.incoming { background: var(--surface2); align-self: flex-start; max-width: 85%; }
+.inbox-msg.outgoing { background: var(--grey-pale); align-self: flex-end; max-width: 85%; }
+.inbox-msg.private { background: rgba(200,240,0,0.12); border: 1px dashed var(--green-dark); }
+.inbox-msg-meta { font-size: 0.65rem; color: var(--grey-light); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+.inbox-draft { border-top: 1px solid var(--grey-border); padding-top: 10px; }
+.inbox-empty { text-align: center; padding: 24px; color: var(--grey-mid); font-size: 0.875rem; }
+.inbox-empty-icon { font-size: 1.6rem; margin-bottom: 6px; }
+.inbox-empty-title { font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+.inbox-empty-text { font-size: 0.82rem; line-height: 1.5; color: var(--grey-mid); }
+.inbox-empty-text code { background: var(--surface2); padding: 1px 5px; border-radius: 4px; font-size: 0.75rem; }
