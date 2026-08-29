@@ -12,7 +12,6 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODELS = {
   'gpt-oss-20b': 'openai/gpt-oss-20b',
   'gpt-oss-120b': 'openai/gpt-oss-120b',
-  'qwen-3.6-27b': 'qwen/qwen3.6-27b',
   'compound-mini': 'groq/compound-mini',
   'compound': 'groq/compound',
 };
@@ -201,7 +200,7 @@ async function callGroqDirect({ model, system, user, temperature = 0.6, maxToken
 // GEMINI — fallback when Groq is unavailable
 // ═══════════════════════════════════════════
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-const GEMINI_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-2.0-flash';
+const GEMINI_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-3.6-flash';
 
 async function callGeminiChat({ system, user, temperature = 0.6, maxTokens = 4096 }) {
   const key = process.env.GEMINI_API_KEY || '';
@@ -241,6 +240,12 @@ function canFallBackToGemini(model) {
 }
 
 async function callGroq(opts, retriesLeft = 2) {
+  // Gemini is also selectable directly (not just an automatic fallback when
+  // Groq is down) — same callGroq entry point every call site already uses,
+  // so nothing else needs to change to support it.
+  if (opts.model === 'gemini') {
+    return callGeminiChat(opts);
+  }
   try {
     return await callGroqDirect(opts, retriesLeft);
   } catch (err) {
@@ -1338,12 +1343,20 @@ router.delete('/chat', (req, res) => {
 // ═══════════════════════════════════════════
 // CHAT — Intent-aware message handler
 // ═══════════════════════════════════════════
+// The client already truncates to this length, but never trust it —
+// re-cap here too so a modified/older client can't blow the prompt budget.
+const MAX_ATTACHMENT_CHARS = 25000;
+
 router.post('/chat/message', async (req, res) => {
   try {
-    const { message, model } = req.body;
+    const { message, model, attachmentName, attachmentText } = req.body;
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'A message is required.' });
     }
+    const hasAttachment = typeof attachmentText === 'string' && attachmentText.trim() && typeof attachmentName === 'string' && attachmentName.trim();
+    const attachmentContext = hasAttachment
+      ? `The user attached a document, "${attachmentName.trim()}". Its content:\n"""\n${attachmentText.trim().slice(0, MAX_ATTACHMENT_CHARS)}\n"""`
+      : '';
     const ws = req.workspace;
     const sessionId = todaySessionId(ws);
 
@@ -1373,7 +1386,7 @@ router.post('/chat/message', async (req, res) => {
 
 Everything you know about this user:
 ${knowledgeContext || 'Not set up yet.'}
-
+${attachmentContext ? `\n${attachmentContext}\n` : ''}
 Recent conversation:
 ${chatContext}
 
@@ -1448,9 +1461,9 @@ Output ONLY: {"action": "ACTION_NAME", "params": { ... }}`;
       action = 'CHAT';
     }
 
-    // Deterministic guard: some models (qwen-3.6-27b measurably more than
-    // gpt-oss) fail to fire SEARCH for the clearest, most unambiguous
-    // current-events phrasing ("what's the latest on X", "any news on X"),
+    // Deterministic guard: models vary in how reliably they fire SEARCH for
+    // the clearest, most unambiguous current-events phrasing ("what's the
+    // latest on X", "any news on X"), sometimes
     // defaulting to CHAT and answering from stale/generic knowledge instead
     // of actually looking it up. These specific phrases are current-events
     // requests by definition — force SEARCH rather than depend on every
@@ -1517,7 +1530,7 @@ Output ONLY: {"action": "ACTION_NAME", "params": { ... }}`;
 
 Everything you know about this user:
 ${knowledgeContext || 'Not set up yet — ask about their company if relevant.'}
-
+${attachmentContext ? `\n${attachmentContext}\nUse the attached document as your primary source when the user's message is about it (e.g. "summarize this", "what does this say about X"). Don't mention the raw text dump above verbatim — read it and answer naturally.\n` : ''}
 Recent conversation:
 ${chatContext}
 
@@ -1735,8 +1748,20 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
         return formatted;
       }
       case 'BRIEFING': {
-        // Fetch + summarize all active topics for this workspace
-        const topics = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY sort_order ASC').all(ws, 'active');
+        // Fetch + summarize active topics for this workspace — filtered to
+        // params.topics when given (this was defined in the classifier's
+        // schema but never actually applied; "brief me on just fuel prices"
+        // silently briefed on everything regardless).
+        let topics = db.prepare('SELECT * FROM becca_topics WHERE workspace = ? AND status = ? ORDER BY sort_order ASC').all(ws, 'active');
+        if (Array.isArray(params.topics) && params.topics.length > 0) {
+          const wanted = params.topics.map((t) => String(t).toLowerCase());
+          const filtered = topics.filter((t) => {
+            const nt = t.normalized_topic;
+            return wanted.some((w) => nt.includes(w) || w.includes(nt));
+          });
+          if (filtered.length === 0) return `None of the requested topics (${params.topics.join(', ')}) matched anything on your watchlist.`;
+          topics = filtered;
+        }
         if (topics.length === 0) return 'No active topics to brief on. Add some topics to your watchlist first.';
         const included = [];
         const skipped = [];

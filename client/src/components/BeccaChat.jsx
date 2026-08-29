@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
 import { WELCOME } from '../lib/welcome';
 import { renderMarkdown } from './PostPreviewPage';
+import { extractAttachmentText, isSupportedAttachment } from '../lib/chatAttachment';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -12,7 +13,7 @@ const MODEL_OPTIONS = [
   { value: 'gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'Faster, lighter, less reliable on nuance', color: '#7c3aed' },
   { value: 'compound-mini', label: 'Compound Mini', desc: 'Fast, light, low latency', color: 'var(--green-dark)' },
   { value: 'compound', label: 'Compound', desc: 'Agentic — does its own web browsing/tool use', color: '#f59e0b' },
-  { value: 'qwen-3.6-27b', label: 'Qwen 3.6 27B', desc: 'Latest generation, experimental', color: '#ef4444' },
+  { value: 'gemini', label: 'Gemini', desc: 'Google’s model — separate provider from Groq', color: '#4285f4' },
 ];
 
 function todaySessionId(ws) {
@@ -28,9 +29,13 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [attachment, setAttachment] = useState(null); // { name, text, truncated }
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState('');
   const feedRef = useRef(null);
   const inputRef = useRef(null);
   const modelWrapRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -82,23 +87,56 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
     setMessages(prev => [...prev, { id: Date.now() + Math.random(), role, content, ...extra }]);
   }
 
-  function appendUser(text) { appendMsg('user', text); }
+  function appendUser(text, attachmentName) { appendMsg('user', text, attachmentName ? { attachmentName } : {}); }
   function appendBecca(text) { appendMsg('becca', renderMarkdown(text), { isHTML: true }); }
   function appendThinking() { appendMsg('thinking', '', { thinkId: 'think-' + Date.now() }); }
   function removeThinking() { setMessages(prev => prev.filter(m => m.role !== 'thinking')); }
 
+  async function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    setAttachError('');
+    if (!isSupportedAttachment(file)) {
+      setAttachError('Only PDF, .txt, and .md files are supported right now.');
+      return;
+    }
+    setAttaching(true);
+    try {
+      const extracted = await extractAttachmentText(file);
+      setAttachment(extracted);
+    } catch (err) {
+      setAttachError(err.message || 'Could not read that file.');
+    }
+    setAttaching(false);
+  }
+
+  function removeAttachment() {
+    setAttachment(null);
+    setAttachError('');
+  }
+
   async function handleSend() {
     const msg = input.trim();
-    if (!msg || busy) return;
+    if ((!msg && !attachment) || busy) return;
+    const effectiveMsg = msg || `Please review the attached document (${attachment.name}).`;
+    const currentAttachment = attachment;
     setInput('');
+    setAttachment(null);
     setBusy(true);
-    appendUser(msg);
+    appendUser(effectiveMsg, currentAttachment?.name);
     appendThinking();
 
     const currentSession = activeSession || todaySessionId(workspace);
 
     try {
-      const result = await api.becca.sendChatMessage({ message: msg, workspace, model });
+      const result = await api.becca.sendChatMessage({
+        message: effectiveMsg,
+        workspace,
+        model,
+        attachmentName: currentAttachment?.name,
+        attachmentText: currentAttachment?.text,
+      });
       removeThinking();
       appendBecca(result.reply || 'Done.');
       if (!activeSession) onSelectSession?.(result.session_id || currentSession);
@@ -166,7 +204,14 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
         )}
         {messages.map(m => (
           <div key={m.id} className={`msg-group msg-${m.role}`}>
-            {m.role === 'user' && <div className="msg-user"><div className="msg-user-bubble">{esc(m.content)}</div></div>}
+            {m.role === 'user' && (
+              <div className="msg-user">
+                <div className="msg-user-col">
+                  {m.attachmentName && <div className="msg-attachment-chip">📎 {esc(m.attachmentName)}</div>}
+                  <div className="msg-user-bubble">{esc(m.content)}</div>
+                </div>
+              </div>
+            )}
             {m.role === 'becca' && (
               <div className="msg-becca">
                 <div className="becca-av">✦</div>
@@ -189,7 +234,23 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
       </div>
 
       <div className="becca-input-bar">
+        {(attachment || attaching || attachError) && (
+          <div className="attachment-preview-row">
+            {attaching && <div className="attachment-chip attachment-chip-loading">Reading file…</div>}
+            {attachment && !attaching && (
+              <div className="attachment-chip">
+                📎 {attachment.name}{attachment.truncated ? ' (truncated to fit)' : ''}
+                <button type="button" className="attachment-chip-remove" onClick={removeAttachment} aria-label={`Remove ${attachment.name}`}>✕</button>
+              </div>
+            )}
+            {attachError && <div className="attachment-error">{attachError}</div>}
+          </div>
+        )}
         <div className="input-inner">
+          <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+            style={{ display: 'none' }} onChange={handleFileSelect} />
+          <button type="button" className="input-attach" title="Attach a PDF or text file"
+            aria-label="Attach a PDF or text file" onClick={() => fileInputRef.current?.click()} disabled={busy || attaching}>📎</button>
           {onModelChange && (
             <div className="model-switcher" ref={modelWrapRef}>
               <button type="button" className="model-btn" onClick={() => setModelOpen(o => !o)}>
@@ -217,8 +278,8 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
           )}
           <input ref={inputRef} type="text" className="input-main" value={input}
             onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="Ask me anything, or say 'track [topic]', 'briefing'…" disabled={busy} />
-          <button className="input-send" onClick={handleSend} disabled={busy || !input.trim()}>↑</button>
+            placeholder={attachment ? `Ask something about ${attachment.name}, or send as-is…` : "Ask me anything, or say 'track [topic]', 'briefing'…"} disabled={busy} />
+          <button className="input-send" onClick={handleSend} disabled={busy || (!input.trim() && !attachment)}>↑</button>
         </div>
       </div>
     </div>

@@ -3594,7 +3594,100 @@ input.pf-input:focus {
   padding: 0.75rem 1.5rem 4rem;
   flex-shrink: 0;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-preview-row {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--grey-border);
+  border-radius: 100px;
+  padding: 6px 8px 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 300;
+  color: var(--ink);
+}
+
+.attachment-chip-loading {
+  color: var(--grey-light);
+  font-style: italic;
+}
+
+.attachment-chip-remove {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: var(--grey-border);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+
+.attachment-chip-remove:hover {
+  background: var(--grey-mid);
+  color: #fff;
+}
+
+.attachment-error {
+  font-size: 0.8rem;
+  color: #d92d20;
+}
+
+.input-attach {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+  transition: background-color 0.18s;
+}
+
+.input-attach:hover:not(:disabled) {
+  background: var(--grey-border);
+}
+
+.input-attach:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.msg-user-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.msg-attachment-chip {
+  font-size: 0.75rem;
+  color: var(--grey-light);
+  margin-bottom: 4px;
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 .input-inner {
