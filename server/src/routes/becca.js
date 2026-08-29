@@ -1341,6 +1341,9 @@ router.delete('/chat', (req, res) => {
 router.post('/chat/message', async (req, res) => {
   try {
     const { message, model } = req.body;
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'A message is required.' });
+    }
     const ws = req.workspace;
     const sessionId = todaySessionId(ws);
 

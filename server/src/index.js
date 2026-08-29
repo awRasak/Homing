@@ -49,6 +49,19 @@ app.use('/api/buffer', requireAuth, bufferRouter);
 // GET the composited image directly; the router itself guards the write path.
 app.use('/api/social-assets', socialAssetsRouter);
 
+// Body-parser errors (oversized payload, malformed JSON) otherwise fall
+// through to Express's default HTML error page, which leaks internal file
+// paths and returns HTML to a client expecting JSON.
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large.' });
+  }
+  if (err?.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Malformed request body.' });
+  }
+  next(err);
+});
+
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Homing server listening on http://localhost:${port}`);
