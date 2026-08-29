@@ -524,6 +524,19 @@ CREATE TABLE IF NOT EXISTS social_assets (
 );
 `);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS chatwoot_settings (
+  workspace TEXT PRIMARY KEY,
+  chatwoot_url TEXT NOT NULL DEFAULT '',
+  api_token TEXT NOT NULL DEFAULT '',
+  account_id TEXT NOT NULL DEFAULT '',
+  inbox_id TEXT NOT NULL DEFAULT '',
+  auto_reply_enabled INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`);
+
 export function nowIso() {
   return new Date().toISOString();
 }

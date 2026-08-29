@@ -13,6 +13,7 @@ import socialRouter from './routes/social.js';
 import bufferRouter from './routes/buffer.js';
 import authRouter from './routes/auth.js';
 import socialAssetsRouter from './routes/socialAssets.js';
+import chatwootRouter from './routes/chatwoot.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
 import { startScheduler, startSocialAssetsPruner } from './scheduler.js';
 import { requireAuth } from './auth.js';
@@ -34,7 +35,8 @@ app.get('/api/status', (req, res) => {
 // Auth routes — public
 app.use('/api/auth', authRouter);
 
-// Protected routes
+// Chatwoot — single router handles its own auth (webhook public, rest requires JWT)
+app.use('/api/chatwoot', chatwootRouter);
 app.use('/api/designs', requireAuth, designsRouter);
 app.use('/api/designs', requireAuth, generateRouter);
 app.use('/api/designs', requireAuth, batchRouter);
