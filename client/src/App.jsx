@@ -80,6 +80,7 @@ const SECTION_META = {
   dashboard: { name: 'Dashboard', status: 'Your saved proposals' },
   becca: { name: 'Homin', status: 'Personal Intelligence Assistant' },
   design: { name: 'Design', status: 'AI-powered canvas editor' },
+  autopilot: { name: 'Autopilot', status: 'Social Autopilot' },
   settings: { name: 'Settings', status: 'Coming soon' },
 };
 
@@ -1117,7 +1118,7 @@ export default function App() {
     return <div className="app-loading">Loading…</div>;
   }
 
-  const meta = SECTION_META[section];
+  const meta = SECTION_META[section] || SECTION_META.becca;
 
   return (
     <div className="app-shell">
