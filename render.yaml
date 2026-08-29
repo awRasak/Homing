@@ -35,3 +35,13 @@ services:
         sync: false
       - key: R2_REGION
         value: auto
+      - key: CHATWOOT_URL
+        sync: false
+      - key: CHATWOOT_API_TOKEN
+        sync: false
+      - key: CHATWOOT_ACCOUNT_ID
+        sync: false
+      - key: CHATWOOT_WEBHOOK_SECRET
+        sync: false
+      - key: CHATWOOT_DRAFT_MODEL
+        value: gpt-oss-20b

@@ -239,7 +239,7 @@ function canFallBackToGemini(model) {
   return !resolveGroqModel(model).startsWith('groq/');
 }
 
-async function callGroq(opts, retriesLeft = 2) {
+export async function callGroq(opts, retriesLeft = 2) {
   // Gemini is also selectable directly (not just an automatic fallback when
   // Groq is down) — same callGroq entry point every call site already uses,
   // so nothing else needs to change to support it.
@@ -1167,7 +1167,7 @@ router.get('/chat/:sessionId', (req, res) => {
 // workspace. Every agent surface (chat, briefings, pipeline) should draw from
 // here instead of re-querying tables ad hoc.
 // ═══════════════════════════════════════════
-function buildKnowledgeBase(ws) {
+export function buildKnowledgeBase(ws) {
   const profile = db.prepare('SELECT * FROM becca_profile WHERE workspace = ?').get(ws);
   const topics = db.prepare("SELECT name, context FROM becca_topics WHERE workspace = ? AND status = 'active' ORDER BY sort_order ASC").all(ws);
   const memory = db.prepare('SELECT content FROM becca_memory WHERE workspace = ? ORDER BY created_at DESC LIMIT 40').all(ws).reverse();
