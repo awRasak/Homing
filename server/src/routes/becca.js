@@ -1616,8 +1616,15 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
         // Nigeria"), and exact-only matching silently failed on that.
         const target = name.toLowerCase();
         const active = db.prepare('SELECT id, name, normalized_topic FROM becca_topics WHERE workspace = ? AND status = ?').all(ws, 'active');
-        const topic = active.find((t) => t.normalized_topic === target)
-          || active.find((t) => t.normalized_topic.includes(target) || target.includes(t.normalized_topic));
+        const exact = active.find((t) => t.normalized_topic === target);
+        const fuzzyMatches = exact ? [] : active.filter((t) => t.normalized_topic.includes(target) || target.includes(t.normalized_topic));
+        if (!exact && fuzzyMatches.length > 1) {
+          // Ambiguous — e.g. "fuel" matches both "fuel prices in Nigeria"
+          // and "fuel subsidy debates in Nigeria". Silently picking the
+          // first one is a real way to pause the wrong topic; ask instead.
+          return `"${name}" matches more than one topic: ${fuzzyMatches.map((t) => `"${t.name}"`).join(', ')}. Which one did you mean?`;
+        }
+        const topic = exact || fuzzyMatches[0];
         if (!topic) return `Topic "${name}" not found on your watchlist.`;
         db.prepare('UPDATE becca_topics SET status = ?, updated_at = ? WHERE id = ?').run('paused', nowIso(), topic.id);
         return `Stopped tracking "${topic.name}" (paused, not deleted — you can resume it from the Watchlist).`;
