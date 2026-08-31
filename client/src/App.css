@@ -618,42 +618,6 @@
   background: var(--surface2);
   color: var(--ink);
 }
-.design-chip-clear {
-  background: none;
-  border: none;
-  color: var(--grey-light);
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  padding: 0 0.15rem;
-}
-.design-chip-clear:hover {
-  color: #ff6b6b;
-}
-.design-chip-rename {
-  background: none;
-  border: none;
-  color: var(--grey-light);
-  cursor: pointer;
-  font-size: 0.85rem;
-  line-height: 1;
-  padding: 0 0.15rem;
-  opacity: 0;
-  transition: opacity 0.15s;
-  flex-shrink: 0;
-}
-.design-chip:hover .design-chip-rename,
-.design-chip:focus-within .design-chip-rename {
-  opacity: 1;
-}
-.design-chip-rename:hover {
-  color: var(--green-dark);
-}
-.design-chip-confirm {
-  display: flex;
-  gap: 0.3rem;
-  font-size: 0.92rem;
-}
 .design-chip-new {
   cursor: pointer;
   color: var(--green-dark);
@@ -9009,11 +8973,199 @@ input.input-main:focus {
 .ios-prompt-point{position:fixed;bottom:0;left:50%;transform:translateX(-50%);color:var(--surface);font-size:18px;line-height:1;text-shadow:0 -2px 8px rgba(0,0,0,0.15)}
 /* mobile fixes */
 @media (max-width: 768px){
-  .nav-rail{position:fixed;bottom:0;left:0;right:0;top:auto;width:100%;height:56px;flex-direction:row;justify-content:space-around;padding-bottom:env(safe-area-inset-bottom);z-index:50}
+  .nav-rail{position:fixed;bottom:0;left:0;right:0;top:auto;width:100%;height:64px;flex-direction:row;justify-content:space-around;padding-bottom:env(safe-area-inset-bottom);z-index:50}
   .nav-rail .nav-spacer{display:none}
-  .app-shell{padding-bottom:56px}
+  /* exactly the 5 destinations: hide logo + settings + logout from the bar */
+  .nav-rail .nav-logo,
+  .nav-rail .nav-settings,
+  .nav-rail .nav-logout{display:none}
+  .nav-rail .nav-item{width:auto;height:auto;flex:1;max-width:96px;padding:10px 0}
+  .app-shell{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  /* theme toggle moves into the profile-avatar menu on mobile */
+  .theme-toggle-desktop{display:none}
+  .profile-avatar{width:40px;height:40px}
+  .topbar{padding:12px 16px}
+  .topbar-status{display:none}
+  .topbar .save-status{display:none}
+  .topbar .btn-primary,
+  .topbar .btn-secondary{padding:0.5rem 0.7rem;font-size:0.78rem}
   .onboarding-modal{max-height:100dvh;overflow-y:auto}
   .onboarding-steps{overflow-x:auto;scrollbar-width:none;flex-wrap:nowrap}
   .onboarding-steps::-webkit-scrollbar{display:none}
   .competitor-row input{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+
+/* ── Profile avatar + menu ── */
+.profile-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.profile-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1.5px solid var(--grey-border);
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.profile-avatar:hover {
+  border-color: var(--green-dark);
+  background: var(--green-soft);
+}
+.profile-avatar:focus-visible {
+  outline: 2px solid var(--green-dark);
+  outline-offset: 2px;
+}
+
+.profile-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--grey-border);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  z-index: 500;
+  animation: profile-menu-in 0.14s ease-out;
+}
+@keyframes profile-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.profile-menu-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--grey-border);
+  margin-bottom: 6px;
+}
+.profile-menu-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.profile-menu-email {
+  font-size: 0.75rem;
+  color: var(--grey-light);
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.profile-menu-item:hover {
+  background: var(--green-soft);
+}
+.profile-menu-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.profile-menu-item svg.profile-menu-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.profile-menu-danger {
+  color: #c05050;
+}
+.profile-menu-danger:hover {
+  background: rgba(192, 80, 80, 0.1);
+}
+
+/* ── Design chip ⋯ menu ── */
+.design-chip-menu-btn {
+  background: none;
+  border: none;
+  color: var(--grey-mid);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  color: var(--grey-light);
+  transition: background 0.12s, color 0.12s;
+}
+.design-chip-menu-btn:hover {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+.design-chip-menu {
+  position: fixed;
+  z-index: 900;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--grey-border);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+  padding: 5px;
+  transform: translateX(-100%);
+  margin-top: 4px;
+  animation: profile-menu-in 0.12s ease-out;
+}
+.design-chip-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.design-chip-menu-item:hover {
+  background: var(--green-soft);
+}
+.design-chip-menu-danger {
+  color: #c05050;
+}
+.design-chip-menu-danger:hover {
+  background: rgba(192, 80, 80, 0.1);
+}
+/* drop targets for larger taps on the ⋯ controls */
+@media (pointer: coarse) {
+  .design-chip-menu-btn { padding: 12px 14px; }
+  .design-chip { min-height: 46px; }
+  .design-chip-main { padding: 8px 0; }
+}
+@media (max-width: 768px){
+  .w-chips-label,.chips-row{display:none !important}
+  .nav-logo,.nav-rail .nav-item:last-child{display:none !important}
+  .app-shell{height:100dvh;overflow:hidden}
+  .topbar{padding-top:env(safe-area-inset-top)}
+  .becca-input-bar{padding-bottom:calc(12px + env(safe-area-inset-bottom)); margin-bottom:56px}
 }
