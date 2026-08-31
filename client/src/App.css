@@ -9209,3 +9209,32 @@ input.input-main:focus {
   .toolbar-group{flex-shrink:0}
   .becca-section,.proposals-section,.brandkit-section{padding:12px;overflow:auto}
 }
+@media (max-width: 768px){
+  /* Proposal Editor: stack 3 panes vertically */
+  .editor-layout{flex-direction:column;overflow:auto}
+  .editor-sidebar,.editor-panel{width:100% !important;max-width:none;min-width:0;border-left:none;border-top:1px solid var(--grey-border);max-height:none}
+  .editor-sidebar{order:1}
+  .editor-canvas{order:2;min-height:42vh}
+  .editor-panel{order:3}
+  .editor-resizer,.editor-resizer-right{display:none}
+  /* Becca tabs scroll */
+  .becca-topbar{overflow-x:auto;scrollbar-width:none}
+  .becca-topbar::-webkit-scrollbar{display:none}
+  .becca-topbar-tabs{flex-wrap:nowrap;overflow-x:auto;gap:12px}
+  .becca-tab{flex-shrink:0;white-space:nowrap}
+  /* Campaigns: single pane */
+  .campaigns-layout{flex-direction:column}
+  .campaigns-sidebar{width:100%;border-right:none;border-bottom:1px solid var(--grey-border)}
+  .campaigns-detail{display:none}
+  .campaigns-detail.campaigns-detail-mobile{ display:flex; }
+  /* Inputs not truncated */
+  .editor-panel .panel-content input, .editor-panel .panel-content textarea{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  /* Proposal bottom input safe area */
+  .chat-bar-wrap{padding-bottom:env(safe-area-inset-bottom)}
+}
+@media (max-width: 768px){
+  .proposals-header{flex-wrap:wrap;gap:8px}
+  .proposals-header .topbar-actions{flex-wrap:wrap}
+  .recipients-head{flex-wrap:wrap;gap:8px}
+  .recipients-head .btn-add-recipient{flex:1;min-width:140px}
+}
