@@ -91,6 +91,52 @@ const COMING_SOON_COPY = {
 
 export default function App() {
   const [section, setSection] = useState('becca');
+  const sectionHistoryRef = useRef(['becca']);
+  useEffect(() => {
+    const last = sectionHistoryRef.current[sectionHistoryRef.current.length - 1];
+    if (last !== section) {
+      sectionHistoryRef.current.push(section);
+      if (sectionHistoryRef.current.length > 20) sectionHistoryRef.current.shift();
+    }
+  }, [section]);
+
+  // Swipe from left edge to go back on mobile
+  useEffect(() => {
+    let startX = 0, startY = 0, startTime = 0;
+    const EDGE = 24;
+    const THRESHOLD = 80;
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.clientX > EDGE) return;
+      startX = t.clientX;
+      startY = t.clientY;
+      startTime = Date.now();
+    };
+    const onTouchEnd = (e) => {
+      if (!startX) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      const dt = Date.now() - startTime;
+      startX = 0;
+      if (dx > THRESHOLD && dy < 60 && dt < 500) {
+        const hist = sectionHistoryRef.current;
+        if (hist.length > 1) {
+          hist.pop();
+          const prev = hist[hist.length - 1];
+          setSection(prev || 'becca');
+        } else if (window.history.length > 1) window.history.back();
+      }
+    };
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchend', onTouchEnd);
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+  }, []);
+
   const [theme, setTheme] = useState(() => (localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'));
   const [designs, setDesigns] = useState([]);
   const [designsLoaded, setDesignsLoaded] = useState(false);
@@ -138,6 +184,8 @@ export default function App() {
   const [resetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') || '');
   const [resetPassword, setResetPassword] = useState('');
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef(null);
 
   const bootstrapped = useRef(false);
   const importSourceRef = useRef('manual'); // 'onboarding' = seed the brand kit, 'manual' = leave it alone
@@ -205,6 +253,25 @@ export default function App() {
       window.removeEventListener('offline', onOffline);
     };
   }, []);
+
+  // Close the profile menu on outside click / Escape.
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    function onDocClick(e) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setProfileMenuOpen(false);
+      }
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setProfileMenuOpen(false);
+    }
+    document.addEventListener('pointerdown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [profileMenuOpen]);
 
   // Loads providers, designs, and Becca data — safe to call again after the
   // auth token becomes available (bootstrap runs before login/signup).
@@ -1203,7 +1270,7 @@ export default function App() {
           <div className="topbar-r">
             <button
               type="button"
-              className="theme-toggle"
+              className="theme-toggle theme-toggle-desktop"
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               onClick={toggleTheme}
             >
@@ -1228,6 +1295,59 @@ export default function App() {
                 </button>
               </>
             )}
+            {/* Profile avatar — replaces the rail's settings/logout icons on mobile */}
+            <div className="profile-wrap" ref={profileMenuRef}>
+              <button
+                type="button"
+                className="profile-avatar"
+                aria-haspopup="menu"
+                aria-expanded={profileMenuOpen}
+                title={authUser?.name || 'Account'}
+                onClick={() => setProfileMenuOpen(o => !o)}
+              >
+                {(authUser?.name || 'H').trim().charAt(0).toUpperCase()}
+              </button>
+              {profileMenuOpen && (
+                <div className="profile-menu" role="menu">
+                  <div className="profile-menu-head">
+                    <div className="profile-menu-name">{authUser?.name || 'Account'}</div>
+                    <div className="profile-menu-email">{authUser?.email || ''}</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="profile-menu-item"
+                    onClick={() => { setProfileMenuOpen(false); toggleTheme(); }}
+                  >
+                    <img src={theme === 'dark' ? '/icons/sun.png' : '/icons/moon.png'} alt="" className="profile-menu-icon" />
+                    {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+                  </button>
+                  <button
+                    type="button"
+                    className="profile-menu-item"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      setSection('becca');
+                      setBeccaSettingsOpen(true);
+                    }}
+                  >
+                    <img src="/icons/settings.png" alt="" className="profile-menu-icon" />
+                    Settings
+                  </button>
+                  <button
+                    type="button"
+                    className="profile-menu-item profile-menu-danger"
+                    onClick={() => { setProfileMenuOpen(false); handleLogout(); }}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="profile-menu-icon">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                      <polyline points="16 17 21 12 16 7" />
+                      <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
