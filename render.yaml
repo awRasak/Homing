@@ -3,7 +3,7 @@ services:
     name: homing-api
     runtime: node
     rootDir: server
-    buildCommand: pip install --quiet pymupdf && npm install
+    buildCommand: pip install --quiet pymupdf && npm install && cd ../client && npm install && npm run build
     startCommand: node src/index.js
     plan: free
     # Free persistence via R2 — set these in Render dashboard to keep DB across deploys

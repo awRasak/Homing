@@ -17,8 +17,14 @@ import chatwootRouter from './routes/chatwoot.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
 import { startScheduler, startSocialAssetsPruner, startReminderScheduler } from './scheduler.js';
 import { requireAuth } from './auth.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 import { probePyMuPDF } from './pdfTool.js';
 import './db.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDist = path.join(__dirname, '../../client/dist');
 
 const app = express();
 app.use(cors());
@@ -50,6 +56,15 @@ app.use('/api/buffer', requireAuth, bufferRouter);
 // Not gated by requireAuth at this level — Buffer's servers must be able to
 // GET the composited image directly; the router itself guards the write path.
 app.use('/api/social-assets', socialAssetsRouter);
+
+// Serve client build when present (Render single-service deploy)
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Body-parser errors (oversized payload, malformed JSON) otherwise fall
 // through to Express's default HTML error page, which leaks internal file
