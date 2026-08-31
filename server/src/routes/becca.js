@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db, nowIso, newId } from '../db.js';
 import { generateBrandImage } from '../ai/brandImage.js';
 import { tavilySearch, isTavilyAvailable } from '../ai/tavily.js';
+import { isBufferAvailable, getOrganizations, getChannels, createPost as bufferCreatePost } from '../buffer.js';
 
 const router = Router();
 
@@ -1411,19 +1412,26 @@ Visual/proposal intent: "design a proposal for", "make a proposal for", "build a
 "remind me", "remind me to", "nudge me", "set a reminder", "don't let me forget", "ping me about".
 - MEMORY: { "content": "what to remember" }
 "remember that", "keep in mind", "don't forget that", "note that", "make a note", "for future reference".
+- POST_SOCIAL: { "text": "post content", "channels": ["linkedin","twitter","instagram","facebook"], "when": "optional ISO 8601 for scheduling" }
+Social publishing inside Homin: "post to linkedin", "post this to", "publish to", "publish on", "share on", "share this on", "push to", "queue on", "schedule on", "send to linkedin", "post on linkedin", "publish to twitter", "put this on linkedin". If no channel named, default to ["linkedin"]. Channels are service names: linkedin, twitter, instagram, facebook, threads, tiktok, pinterest, mastodon, bluesky, youtube.
 - CHAT: {} — the default. Conversation, brainstorming, AND any general-knowledge/factual/how-to/legal question you can answer from what you know, AND any question ABOUT one of the actions above (e.g. "what tone should I use for blog posts" is a question about writing, not a PIPELINE command) rather than a command to actually perform it. When genuinely unsure between two actions, choose CHAT.
 
 Classify the LATEST message on its own terms, based only on what it actually says. Use "Recent conversation" only to resolve pronouns or an implied subject (e.g. "track that" after discussing a topic) — never let the fact that recent turns were CHAT make you default a new, clearly-worded command to CHAT too. If the latest message is an unambiguous instruction ("remind me to X", "track Y", "remember that Z"), classify it as that action regardless of what kind of turn came immediately before it.
 
 Output ONLY: {"action": "ACTION_NAME", "params": { ... }}`;
 
-    const classifyRaw = await callGroq({
-      model,
-      system: classifyPrompt,
-      user: message,
-      temperature: 0.1,
-      maxTokens: 400,
-    });
+    let classifyRaw = '';
+    try {
+      classifyRaw = await callGroq({
+        model,
+        system: classifyPrompt,
+        user: message,
+        temperature: 0.1,
+        maxTokens: 400,
+      });
+    } catch (e) {
+      console.warn('[chat] classify LLM failed, fallback to regex:', e.message?.slice(0,100));
+    }
 
     let action = 'CHAT';
     let params = {};
@@ -1490,6 +1498,13 @@ Output ONLY: {"action": "ACTION_NAME", "params": { ... }}`;
         params = { text: remindMatch[1].trim(), when_raw: (remindMatch[2] || '').trim() };
       }
     }
+    if (action !== 'REMINDER') {
+      const m2 = message.match(/^\s*(?:please\s+)?remind me\s+(in\s+\d+\s*\w+.*?)\s+to\s+(.+)$/i);
+      if (m2) {
+        action = 'REMINDER';
+        params = { text: m2[2].trim(), when_raw: m2[1].trim() };
+      }
+    }
 
     // Deterministic guard: negation ("don't track X, I'm not interested")
     // was found firing REMOVE_TOPIC — the classifier reasonably read "track"
@@ -1516,8 +1531,52 @@ Output ONLY: {"action": "ACTION_NAME", "params": { ... }}`;
       action = 'ADD_TOPIC';
       params = { names: [compoundMatch[1].trim()] };
     }
+    // Reverse: "search for X and track it" — pronoun refers to the search query
+    if (action === 'CHAT') {
+      const m = message.match(/\b(?:search|look\s*up|find|google)\s+(?:for\s+)?(.+?)\s+and\s+(?:also\s+)?(?:track|monitor|watch|keep tabs on|follow)\s+(?:it|this|that|them)\b/i);
+      if (m) {
+        const q = m[1].trim();
+        if (q.length >= 3) {
+          action = 'ADD_TOPIC';
+          params = { names: [q] };
+        }
+      }
+    }
     const wantsImmediateSearch = action === 'ADD_TOPIC'
       && /\b(search|look\s*up|find out|check now|right now|run a search)\b/i.test(message);
+
+    // Guard: multi-topic "track X and Y" misclassified as CHAT
+    if (action === 'CHAT' && /^\s*(?:track|monitor|watch|keep tabs on|follow|keep an eye on)\b/i.test(message) && message.toLowerCase().includes(' and ')) {
+      const mTrack = message.match(/^\s*(?:track|monitor|watch|keep tabs on|keep an eye on|follow)\s+(.+)$/i);
+      if (mTrack) {
+        const raw = mTrack[1].trim().replace(/\s+and\s+search.*$/i, '').trim();
+        const lower = raw.toLowerCase();
+        if (!lower.includes('supply and demand') && !lower.includes('salt and pepper')) {
+          const parts = raw.split(/\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+          if (parts.length > 1 && parts.every((p) => p.length >= 3)) {
+            action = 'ADD_TOPIC';
+            params = { names: parts };
+          }
+        }
+      }
+    }
+
+    if (action === 'CHAT' && /\b(brief me|give me a briefing|daily briefing|today'?s digest|catch me up|what did i miss|briefing time)\b/i.test(message)) {
+      action = 'BRIEFING';
+      params = {};
+    }
+
+    // Deterministic guard for explicit "post to linkedin: <text>" social commands
+    if (action !== 'POST_SOCIAL') {
+      const m = message.match(/^\s*(?:please\s+)?(?:post|publish|share|queue|schedule)\s+(?:this\s+)?(?:to|on)\s+(linkedin|twitter|x|instagram|facebook|threads|tiktok|pinterest|mastodon|bluesky|youtube)(?:\s*[:\-]\s*|\s+)(.+)$/i);
+      if (m) {
+        action = 'POST_SOCIAL';
+        params = { text: m[2].trim(), channels: [m[1].toLowerCase() === 'x' ? 'twitter' : m[1].toLowerCase()] };
+      } else if (/^\s*(?:please\s+)?(?:post|publish|share)\s*[:\-]\s*.+/i.test(message) && action === 'CHAT') {
+        const m2 = message.match(/^\s*(?:please\s+)?(?:post|publish|share)\s*(?:this\s+)?(?::|\s*-\s*)\s*(.+)$/i);
+        if (m2) { action = 'POST_SOCIAL'; params = { text: m2[1].trim(), channels: ['linkedin'] }; }
+      }
+    }
 
     let reply;
     let actionResult = null;
@@ -1746,6 +1805,45 @@ async function executeAction(action, params, ws, model, region = '', authHeader 
           formatted = items.map(i => `- ${i.title} [${i.source}${i.date ? ' — ' + i.date : ''}]`).join('\n');
         }
         return formatted;
+      }
+      case 'POST_SOCIAL': {
+        const text = (params.text || params.content || params.message || '').trim();
+        if (!text) return 'No post content provided — what should I post?';
+        let channels = params.channels || params.services || [];
+        if (typeof channels === 'string') channels = [channels];
+        channels = channels.map((c) => String(c).toLowerCase().trim()).filter(Boolean);
+        if (!channels.length) channels = ['linkedin'];
+        if (!isBufferAvailable()) return 'Buffer not configured — add BUFFER_API_KEY to server/.env first.';
+        try {
+          const orgs = await getOrganizations();
+          if (!orgs.length) return 'No Buffer organization found.';
+          const allChannels = await getChannels(orgs[0].id);
+          const matched = allChannels.filter((c) => !c.isLocked && !c.isDisconnected && channels.some((s) => c.service.toLowerCase() === s || c.service.toLowerCase().includes(s)));
+          if (!matched.length) return `No connected channels for: ${channels.join(', ')}. Connect them in Buffer first.`;
+          let mode = 'addToQueue';
+          let dueAt = null;
+          if (params.when) {
+            const t = new Date(params.when).getTime();
+            if (!isNaN(t) && t > Date.now() - 5000) { mode = 'customScheduled'; dueAt = new Date(t).toISOString(); }
+          }
+          let imageUrl = null;
+          try {
+            const img = await generateBrandImage({ headline: text.slice(0, 120) });
+            imageUrl = img?.url || null;
+          } catch {}
+          const results = [];
+          for (const ch of matched) {
+            const post = await bufferCreatePost({ channelId: ch.id, text, mode, dueAt, imageUrl: imageUrl || undefined });
+            const whenStr = dueAt ? ` scheduled for ${new Date(dueAt).toLocaleString()}` : ' queued';
+            results.push(`${ch.service} (${ch.displayName || ch.name})${whenStr}`);
+            try {
+              db.prepare('INSERT INTO buffer_scheduled_posts (buffer_post_id, proposal_id, channel_id, channel_name, service, text, image_url, scheduled_at, created_at) VALUES (?,?,?,?,?,?,?,?,datetime(\'now\'))').run(post?.id || null, null, ch.id, ch.displayName || ch.name || '', ch.service, text, imageUrl || null, dueAt);
+            } catch {}
+          }
+          return `Posted to ${matched.length} channel${matched.length > 1 ? 's' : ''}:\n` + results.join('\n') + (imageUrl ? '\n+ brand image attached' : '');
+        } catch (e) {
+          return `Failed to post: ${e.message}`;
+        }
       }
       case 'BRIEFING': {
         // Fetch + summarize active topics for this workspace — filtered to
