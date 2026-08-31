@@ -9169,3 +9169,43 @@ input.input-main:focus {
   .topbar{padding-top:env(safe-area-inset-top)}
   .becca-input-bar{padding-bottom:calc(12px + env(safe-area-inset-bottom)); margin-bottom:56px}
 }
+
+/* ── Chat composer wrap (mobile: attach + model switcher drop to a bottom row) ── */
+.input-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 720px;
+  gap: 6px;
+}
+
+.input-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0 6px;
+}
+
+.input-bottom-spacer {
+  flex: 1;
+}
+
+@media (pointer: coarse) {
+  .input-attach { width: 42px; height: 42px; font-size: 1.05rem; }
+  .input-bottom-row .model-btn { padding: 9px 14px 9px 10px; }
+  .input-send { width: 42px; height: 42px; }
+}
+@media (max-width: 768px){
+  .app-shell{flex-direction:column}
+  .main-area{flex:1;min-width:0;overflow:hidden}
+  .design-main{flex-direction:column}
+  .design-pages-strip{width:100%;height:auto;flex-direction:row;overflow-x:auto;overflow-y:hidden;padding:8px;gap:6px}
+  .design-page-thumb{flex-shrink:0;width:72px}
+  .design-canvas-area{flex:1;min-height:40vh}
+  .design-sidebar{width:100% !important;max-width:none;min-width:0;border-left:none;border-top:1px solid var(--grey-border);max-height:45vh;overflow-y:auto}
+  .design-sidebar-resizer{display:none}
+  .design-toolbar{overflow-x:auto;flex-wrap:nowrap;padding-bottom:8px}
+  .toolbar-group{flex-shrink:0}
+  .becca-section,.proposals-section,.brandkit-section{padding:12px;overflow:auto}
+}
