@@ -659,6 +659,14 @@ export default function BeccaLayout({
   const [openDraft, setOpenDraft] = useState(null);
   const [draftMoveNonce, setDraftMoveNonce] = useState(0);
   const activeTab = beccaSection;
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 768px)').matches);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const onChange = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   function handleTabClick(key) {
     onSectionChange(key);
@@ -695,10 +703,43 @@ export default function BeccaLayout({
     reminders: reminders.filter(r => !r.dismissed && !(r.fired && new Date(r.due) < new Date(Date.now() - 120_000))).length,
   };
 
+  // Renders the content of whichever sub-tab is selected. Reused on desktop
+  // inside the side panel, and on mobile as the full-height single pane.
+  function renderTabContent(tabKey) {
+    if (tabKey === 'chat') {
+      return (
+        <BeccaChat topics={topics} profile={profile} memory={memory}
+          workspace={workspace} activeSession={activeSession}
+          onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} onActionExecuted={onActionExecuted}
+          greeting={chatGreeting} />
+      );
+    }
+    if (tabKey === 'inbox') {
+      return <InboxPanel />;
+    }
+    if (tabKey === 'watchlist') {
+      return <PanelWatchlist topics={topics} onAddTopic={onAddTopic}
+        onRemoveTopic={onRemoveTopic} onUpdateTopic={onUpdateTopic}
+        workspace={workspace} beccaModel={beccaModel} onRefresh={onActionExecuted}
+        settings={settings} />;
+    }
+    if (tabKey === 'briefings') {
+      return <PanelBriefings briefings={briefings} settings={settings}
+        onSaveSettings={onSaveSettings} workspace={workspace} />;
+    }
+    if (tabKey === 'pipeline') {
+      return <PanelPipeline topics={topics} workspace={workspace} onOpenPost={setOpenDraft} refreshKey={draftMoveNonce} activeDesignId={activeDesignId} />;
+    }
+    if (tabKey === 'reminders') {
+      return <PanelReminders reminders={reminders} onAddReminder={onAddReminder} onDismissReminder={onDismissReminder} />;
+    }
+    return null;
+  }
+
   return (
     <div className="becca-layout">
       {/* ── TabBar ── */}
-      <div className="al-tabbar">
+      <div className={`al-tabbar ${isMobile ? 'al-tabbar-mobile' : ''}`}>
         {TABS.map(tab => (
           <button key={tab.key}
             className={`al-tab ${activeTab === tab.key ? 'active' : ''}`}
@@ -712,50 +753,56 @@ export default function BeccaLayout({
         ))}
       </div>
 
-      {/* ── BodyRow ── */}
-      <div className="al-body">
-        <div className="al-left" style={{ width: panelWidth }}>
-          {activeTab === 'chat' && (
-            <PanelSessions workspace={workspace} activeSession={activeSession}
-              onSelectSession={setActiveSession}
-              onNewSession={(id) => setActiveSession(id)} />
+      {isMobile ? (
+        /* ── Mobile: single full-height pane, no draggable split ── */
+        <div className="al-body al-body-mobile">
+          {activeTab === 'chat' ? (
+            <div className="al-chat al-chat-mobile">
+              {renderTabContent('chat')}
+            </div>
+          ) : (
+            <div className="al-left al-left-mobile">
+              {renderTabContent(activeTab)}
+            </div>
           )}
-          {activeTab === 'inbox' && (
-            <InboxPanel />
-          )}
-          {activeTab === 'watchlist' && (
-            <PanelWatchlist topics={topics} onAddTopic={onAddTopic}
-              onRemoveTopic={onRemoveTopic} onUpdateTopic={onUpdateTopic}
-              workspace={workspace} beccaModel={beccaModel} onRefresh={onActionExecuted}
-              settings={settings} />
-          )}
-          {activeTab === 'briefings' && (
-            <PanelBriefings briefings={briefings} settings={settings}
-              onSaveSettings={onSaveSettings} workspace={workspace} />
-          )}
-          {activeTab === 'pipeline' && (
-            <PanelPipeline topics={topics} workspace={workspace} onOpenPost={setOpenDraft} refreshKey={draftMoveNonce} activeDesignId={activeDesignId} />
-          )}
-          {activeTab === 'reminders' && (
-            <PanelReminders reminders={reminders} onAddReminder={onAddReminder} onDismissReminder={onDismissReminder} />
+          {openDraft && (
+            <DraftDrawer post={openDraft} onClose={() => setOpenDraft(null)}
+              onMove={async (status) => {
+                await api.becca.updatePost(openDraft.id, { status });
+                setOpenDraft({ ...openDraft, status });
+                setDraftMoveNonce(n => n + 1);
+              }} />
           )}
         </div>
-        <div className="al-resizer" onMouseDown={startResize} title="Drag to resize" />
-        {openDraft && (
-          <DraftDrawer post={openDraft} onClose={() => setOpenDraft(null)}
-            onMove={async (status) => {
-              await api.becca.updatePost(openDraft.id, { status });
-              setOpenDraft({ ...openDraft, status });
-              setDraftMoveNonce(n => n + 1);
-            }} />
-        )}
-        <div className="al-chat">
-          <BeccaChat topics={topics} profile={profile} memory={memory}
-            workspace={workspace} activeSession={activeSession}
-            onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} onActionExecuted={onActionExecuted}
-            greeting={chatGreeting} />
+      ) : (
+        /* ── Desktop: resizable side list + chat ── */
+        <div className="al-body">
+          <div className="al-left">
+            {activeTab === 'chat' ? (
+              <PanelSessions workspace={workspace} activeSession={activeSession}
+                onSelectSession={setActiveSession}
+                onNewSession={(id) => setActiveSession(id)} />
+            ) : (
+              renderTabContent(activeTab)
+            )}
+          </div>
+          <div className="al-resizer" onMouseDown={startResize} title="Drag to resize" />
+          {openDraft && (
+            <DraftDrawer post={openDraft} onClose={() => setOpenDraft(null)}
+              onMove={async (status) => {
+                await api.becca.updatePost(openDraft.id, { status });
+                setOpenDraft({ ...openDraft, status });
+                setDraftMoveNonce(n => n + 1);
+              }} />
+          )}
+          <div className="al-chat">
+            <BeccaChat topics={topics} profile={profile} memory={memory}
+              workspace={workspace} activeSession={activeSession}
+              onSelectSession={setActiveSession} model={beccaModel} onModelChange={onModelChange} onActionExecuted={onActionExecuted}
+              greeting={chatGreeting} />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

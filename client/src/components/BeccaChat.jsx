@@ -36,6 +36,30 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   const inputRef = useRef(null);
   const modelWrapRef = useRef(null);
   const fileInputRef = useRef(null);
+  const [kbInset, setKbInset] = useState(0);
+
+  // Keep the composer above the on-screen keyboard. On iOS in a standalone PWA
+  // the layout viewport may not shrink, so we track the visual viewport and
+  // pad the composer by however much the keyboard covers.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    let lastInset = 0;
+    const update = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      if (Math.abs(inset - lastInset) > 1) {
+        lastInset = inset;
+        setKbInset(inset);
+      }
+    };
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -105,6 +129,12 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
     try {
       const extracted = await extractAttachmentText(file);
       setAttachment(extracted);
+      // Persist to Homin's knowledge base so this document stays a durable
+      // reference beyond this one message, not just one-shot chat context.
+      try {
+        const saved = await api.becca.addKnowledgeDoc({ filename: extracted.name, content: extracted.text, doc_type: 'text' });
+        setAttachment((prev) => (prev && prev.name === extracted.name ? { ...prev, savedToKnowledge: true, knowledgeDocId: saved?.id } : prev));
+      } catch { /* saving to the knowledge base is best-effort — the message can still send without it */ }
     } catch (err) {
       setAttachError(err.message || 'Could not read that file.');
     }
@@ -112,6 +142,11 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   }
 
   function removeAttachment() {
+    // Undo the knowledge-base save too — the ✕ reads as "cancel this
+    // attachment", so a dismissed file shouldn't linger as a permanent memory.
+    if (attachment?.knowledgeDocId) {
+      api.becca.deleteKnowledgeDoc(attachment.knowledgeDocId).catch(() => {});
+    }
     setAttachment(null);
     setAttachError('');
   }
@@ -156,12 +191,20 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
   }
 
   async function handleQuickSend(msg) {
+    const currentAttachment = attachment;
     setInput('');
+    setAttachment(null);
     setBusy(true);
     appendThinking();
     const currentSession = activeSession || todaySessionId(workspace);
     try {
-      const result = await api.becca.sendChatMessage({ message: msg, workspace, model });
+      const result = await api.becca.sendChatMessage({
+        message: msg,
+        workspace,
+        model,
+        attachmentName: currentAttachment?.name,
+        attachmentText: currentAttachment?.text,
+      });
       removeThinking();
       appendBecca(result.reply || 'Done.');
       if (!activeSession) onSelectSession?.(result.session_id || currentSession);
@@ -191,12 +234,12 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
               <div className="w-chips-label">{WELCOME.chipsLabel}</div>
               <div className="chips-row">
                 {quickChips.slice(0, 3).map(c => (
-                  <button key={c} className="chip" onClick={() => { setInput(''); appendUser(c); handleQuickSend(c); }}>{c}</button>
+                  <button key={c} className="chip" onClick={() => { setInput(''); appendUser(c, attachment?.name); handleQuickSend(c); }}>{c}</button>
                 ))}
               </div>
               <div className="chips-row chips-row-2">
                 {quickChips.slice(3).map(c => (
-                  <button key={c} className="chip" onClick={() => { setInput(''); appendUser(c); handleQuickSend(c); }}>{c}</button>
+                  <button key={c} className="chip" onClick={() => { setInput(''); appendUser(c, attachment?.name); handleQuickSend(c); }}>{c}</button>
                 ))}
               </div>
             </div>
@@ -233,13 +276,14 @@ export default function BeccaChat({ topics, profile, memory, workspace, activeSe
         ))}
       </div>
 
-      <div className="becca-input-bar">
+      <div className="becca-input-bar" style={{ paddingBottom: kbInset > 0 ? `calc(0.75rem + ${kbInset}px)` : undefined }}>
         {(attachment || attaching || attachError) && (
           <div className="attachment-preview-row">
             {attaching && <div className="attachment-chip attachment-chip-loading">Reading file…</div>}
             {attachment && !attaching && (
-              <div className="attachment-chip">
+              <div className="attachment-chip" title={attachment.savedToKnowledge ? "Saved to Homin's knowledge base — he'll remember this in future conversations" : undefined}>
                 📎 {attachment.name}{attachment.truncated ? ' (truncated to fit)' : ''}
+                {attachment.savedToKnowledge && <span className="attachment-chip-saved">· saved to knowledge base</span>}
                 <button type="button" className="attachment-chip-remove" onClick={removeAttachment} aria-label={`Remove ${attachment.name}`}>✕</button>
               </div>
             )}

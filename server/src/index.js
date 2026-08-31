@@ -15,7 +15,7 @@ import authRouter from './routes/auth.js';
 import socialAssetsRouter from './routes/socialAssets.js';
 import chatwootRouter from './routes/chatwoot.js';
 import { getAvailableProviders, getActiveProvider } from './ai/providers.js';
-import { startScheduler, startSocialAssetsPruner } from './scheduler.js';
+import { startScheduler, startSocialAssetsPruner, startReminderScheduler } from './scheduler.js';
 import { requireAuth } from './auth.js';
 import { probePyMuPDF } from './pdfTool.js';
 import './db.js';
@@ -70,4 +70,5 @@ app.listen(port, () => {
   probePyMuPDF();
   startScheduler();
   startSocialAssetsPruner();
+  startReminderScheduler();
 });

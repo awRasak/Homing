@@ -56,6 +56,10 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
   const [country, setCountry] = useState('');
   const [quietFrom, setQuietFrom] = useState('22:00');
   const [quietTo, setQuietTo] = useState('07:00');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(() => (
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  ));
   const [knowledge, setKnowledge] = useState([]);
   const [docFilename, setDocFilename] = useState('');
   const [docContent, setDocContent] = useState('');
@@ -90,8 +94,19 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
       setQuietFrom(settings.quietFrom || '22:00');
       setQuietTo(settings.quietTo || '07:00');
       setCountry(settings.country || '');
+      setNotificationsEnabled(!!settings.notificationsEnabled);
     }
   }, [settings]);
+
+  async function handleToggleNotifications(next) {
+    if (!next) { setNotificationsEnabled(false); return; }
+    if (typeof Notification === 'undefined') return;
+    // Must request permission directly inside this click handler — browsers
+    // silently ignore requestPermission() calls not triggered by a user gesture.
+    const perm = await Notification.requestPermission();
+    setNotifPermission(perm);
+    setNotificationsEnabled(perm === 'granted');
+  }
 
   useEffect(() => {
     let alive = true;
@@ -195,7 +210,7 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
         usecases,
         links: links.map(l => l.trim()).filter(Boolean)
       });
-      await onSaveSettings('daily', { ...settings, quietFrom, quietTo, country });
+      await onSaveSettings('daily', { ...settings, quietFrom, quietTo, country, notificationsEnabled });
       if (onComplete) onComplete();
       else onClose();
     } catch {
@@ -394,6 +409,26 @@ export default function BeccaSettings({ profile, memory, onSaveProfile, onAddMem
                   <input type="time" className="quiet-time-input" value={quietFrom} onChange={e => setQuietFrom(e.target.value)} />
                   <span>and</span>
                   <input type="time" className="quiet-time-input" value={quietTo} onChange={e => setQuietTo(e.target.value)} />
+                </div>
+              </div>
+              <div className="pf-group settings-section">
+                <div className="settings-section-title">Desktop Notifications</div>
+                <div className="modal-desc" style={{ marginBottom: 10 }}>
+                  Get a system notification when a reminder fires, even if this tab isn't focused — not just the in-app popup.
+                </div>
+                <div className="dc-toggle-row">
+                  <div className={`dc-toggle ${notificationsEnabled ? 'on' : ''}`}
+                    onClick={() => handleToggleNotifications(!notificationsEnabled)}>
+                    <div className="dc-toggle-knob" />
+                  </div>
+                  <div className="dc-status">
+                    <span className="dc-status-dot" style={{ background: notificationsEnabled ? 'var(--green-dark)' : 'var(--grey-mid)' }} />
+                    {notifPermission === 'unsupported'
+                      ? "Not supported in this browser"
+                      : notifPermission === 'denied'
+                        ? 'Blocked — enable notifications for this site in your browser settings'
+                        : notificationsEnabled ? 'On' : 'Off'}
+                  </div>
                 </div>
               </div>
             </div>

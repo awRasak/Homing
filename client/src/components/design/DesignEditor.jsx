@@ -7,7 +7,9 @@ import AIGeneratePanel from './AIGeneratePanel';
 import DesignToolbar from './DesignToolbar';
 import { buildLayersFromPage, pickPresetForPage } from '../../lib/designImport';
 import { renderAllPages } from '../../lib/pdfExtract';
+import { PDFDocument } from 'pdf-lib';
 import { api } from '../../api';
+import { CURATED_GOOGLE_FONTS, ensureGoogleFontLoaded } from '../../lib/googleFonts';
 
 // Reverse-lookup a CANVAS_SIZES key from a saved canvas's own width/height,
 // so reloading a template restores its real size instead of resetting to the
@@ -17,6 +19,22 @@ function presetForDimensions(w, h) {
   return key || 'instagram-post';
 }
 
+function rgbToHex(color) {
+  if (!color) return '#000000';
+  if (color.startsWith('#')) return color.slice(0, 7);
+  const m = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (m) {
+    const toHex = (n) => Math.max(0, Math.min(255, parseInt(n, 10))).toString(16).padStart(2, '0');
+    return `#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`;
+  }
+  return '#000000';
+}
+
+function parseFontFamily(f) {
+  if (!f) return 'Inter';
+  return f.split(',')[0].replace(/['"]/g, '').trim() || 'Inter';
+}
+
 export default function DesignEditor({ design, onPatch }) {
   const fabricRef = useRef(null);
   const idCounter = useRef(0);
@@ -24,13 +42,67 @@ export default function DesignEditor({ design, onPatch }) {
     design?.canvasJson ? presetForDimensions(design.canvasJson.width, design.canvasJson.height) : 'instagram-post'
   ));
   const [canvasVersion, setCanvasVersion] = useState(0);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem('design:sbWidth') || '', 10);
+    return Number.isFinite(saved) ? Math.min(480, Math.max(200, saved)) : 280;
+  });
+  const [transparentBg, setTransparentBg] = useState(false);
   const [socialTemplateId, setSocialTemplateId] = useState(null);
   const saveCanvasTimer = useRef(null);
+  const clipboardRef = useRef(null);
+  const historyMapRef = useRef(new Map()); // pageId -> { stack:[], idx:-1 }
+  const isRestoringRef = useRef(false);
+  const [historyTick, setHistoryTick] = useState(0);
+
+  const getCurrentHistory = useCallback(() => {
+    const pageId = pages[activePageIdx]?.id || 'page-1';
+    if (!historyMapRef.current.has(pageId)) historyMapRef.current.set(pageId, { stack: [], idx: -1 });
+    return historyMapRef.current.get(pageId);
+  }, [pages, activePageIdx]);
+
+  const canUndo = (() => {
+    const h = historyMapRef.current.get(pages[activePageIdx]?.id || 'page-1');
+    return !!h && h.idx > 0;
+  })();
+  const canRedo = (() => {
+    const h = historyMapRef.current.get(pages[activePageIdx]?.id || 'page-1');
+    return !!h && h.idx >= 0 && h.idx < h.stack.length - 1;
+  })();
+
+  // Persist history per design (cap 20 per page to stay under localStorage 5MB)
+  useEffect(() => {
+    if (!design?.id) return;
+    try {
+      const raw = localStorage.getItem(`design:history:${design.id}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          Object.entries(parsed).forEach(([pid, v]) => {
+            if (v && Array.isArray(v.stack) && typeof v.idx === 'number') {
+              historyMapRef.current.set(pid, { stack: v.stack.slice(-20), idx: Math.min(v.idx, v.stack.length - 1) });
+            }
+          });
+          setHistoryTick((x) => x + 1);
+        }
+      }
+    } catch {}
+  }, [design?.id]);
+
+  useEffect(() => {
+    if (!design?.id || historyMapRef.current.size === 0) return;
+    try {
+      const obj = {};
+      historyMapRef.current.forEach((v, k) => { obj[k] = { stack: v.stack.slice(-20), idx: v.idx }; });
+      localStorage.setItem(`design:history:${design.id}`, JSON.stringify(obj));
+    } catch {}
+  }, [historyTick, design?.id]);
   const [layers, setLayers] = useState([]);
   const [selectedObj, setSelectedObj] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [activePanel, setActivePanel] = useState('layers');
   const [zoom, setZoom] = useState(1);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
   const [commandInput, setCommandInput] = useState('');
   const [commandHistory, setCommandHistory] = useState([]);
   const [importOpen, setImportOpen] = useState(false);
@@ -59,21 +131,91 @@ export default function DesignEditor({ design, onPatch }) {
   const refreshLayers = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    setLayers(fc.getObjects().map((obj) => ({
+    const next = fc.getObjects().map((obj) => ({
       _id: obj._id,
       type: obj.type,
       name: obj.name,
       text: obj.text || '',
       visible: obj.visible !== false,
       selectable: obj.selectable !== false,
-    })));
+    }));
+    setLayers((prev) => {
+      if (prev.length === next.length &&
+          prev.every((l, i) => l._id === next[i]._id && l.visible === next[i].visible && l.selectable === next[i].selectable)) {
+        return prev;
+      }
+      return next;
+    });
   }, []);
 
   const handleCanvasReady = useCallback((fc) => {
     fabricRef.current = fc;
     setZoom(fc.getZoom());
     setCanvasVersion((v) => v + 1);
-  }, []);
+    // seed history for current page
+    setTimeout(() => {
+      const h = getCurrentHistory();
+      const snap = JSON.stringify(fc.toObject(['_id', 'name', '_role']));
+      h.stack = [snap];
+      h.idx = 0;
+      setHistoryTick((x) => x + 1);
+    }, 300);
+  }, [getCurrentHistory]);
+
+  const pushHistory = useCallback(() => {
+    if (isRestoringRef.current) return;
+    const fc = fabricRef.current;
+    if (!fc) return;
+    const h = getCurrentHistory();
+    const snap = JSON.stringify(fc.toObject(['_id', 'name', '_role']));
+    if (h.stack[h.idx] === snap) return;
+    const next = h.stack.slice(0, h.idx + 1);
+    next.push(snap);
+    if (next.length > 50) next.shift();
+    h.stack = next;
+    h.idx = next.length - 1;
+    setHistoryTick((x) => x + 1);
+  }, [getCurrentHistory]);
+
+  const handleUndo = useCallback(() => {
+    const h = getCurrentHistory();
+    if (h.idx <= 0) return;
+    const fc = fabricRef.current;
+    if (!fc) return;
+    isRestoringRef.current = true;
+    h.idx -= 1;
+    const snap = h.stack[h.idx];
+    fc.loadFromJSON(JSON.parse(snap))
+      .then(() => {
+        fc.renderAll();
+        refreshLayers();
+        scheduleSaveCanvas();
+      })
+      .finally(() => {
+        isRestoringRef.current = false;
+        setHistoryTick((x) => x + 1);
+      });
+  }, [getCurrentHistory, refreshLayers, scheduleSaveCanvas]);
+
+  const handleRedo = useCallback(() => {
+    const h = getCurrentHistory();
+    if (h.idx >= h.stack.length - 1) return;
+    const fc = fabricRef.current;
+    if (!fc) return;
+    isRestoringRef.current = true;
+    h.idx += 1;
+    const snap = h.stack[h.idx];
+    fc.loadFromJSON(JSON.parse(snap))
+      .then(() => {
+        fc.renderAll();
+        refreshLayers();
+        scheduleSaveCanvas();
+      })
+      .finally(() => {
+        isRestoringRef.current = false;
+        setHistoryTick((x) => x + 1);
+      });
+  }, [getCurrentHistory, refreshLayers, scheduleSaveCanvas]);
 
   // Debounce-persist the canvas so reopening Design (or reloading the app)
   // restores what was there, and so a template marked via "Use as social
@@ -101,7 +243,9 @@ export default function DesignEditor({ design, onPatch }) {
   const handleLayersChanged = useCallback(() => {
     refreshLayers();
     scheduleSaveCanvas();
-  }, [refreshLayers, scheduleSaveCanvas]);
+    // push undo snapshot (debounced slightly to avoid dupes during rapid adds)
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
 
   // Which design (if any) is currently the reusable social-post template.
   useEffect(() => {
@@ -127,12 +271,18 @@ export default function DesignEditor({ design, onPatch }) {
   const addText = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    const text = new fabric.IText('Edit me', {
+    // Use Textbox (an IText subclass) for every text element so add/import/edit
+    // share one type instead of mixing IText (auto-scaling) and Textbox
+    // (fixed-width wrap). A fixed starting width keeps behavior predictable;
+    // users can clear it for auto-fit (see ObjectPanel auto-width).
+    const text = new fabric.Textbox('Edit me', {
       left: 100,
       top: 100,
+      width: 480,
       fontSize: 48,
       fontFamily: 'Inter, sans-serif',
       fill: '#1e211e',
+      textAlign: 'left',
       _id: genId(),
       name: 'Text',
     });
@@ -232,7 +382,60 @@ export default function DesignEditor({ design, onPatch }) {
     fc.renderAll();
     refreshLayers();
     scheduleSaveCanvas();
-  }, [refreshLayers, scheduleSaveCanvas]);
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  const handleBringForward = useCallback((id) => {
+    const fc = fabricRef.current;
+    if (!fc) return;
+    const objs = fc.getObjects();
+    const idx = objs.findIndex((o) => o._id === id);
+    if (idx < 0 || idx >= objs.length - 1) return;
+    fc.moveTo(objs[idx], idx + 1);
+    fc.renderAll();
+    refreshLayers();
+    scheduleSaveCanvas();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  const handleSendBackward = useCallback((id) => {
+    const fc = fabricRef.current;
+    if (!fc) return;
+    const objs = fc.getObjects();
+    const idx = objs.findIndex((o) => o._id === id);
+    if (idx <= 0) return;
+    fc.moveTo(objs[idx], idx - 1);
+    fc.renderAll();
+    refreshLayers();
+    scheduleSaveCanvas();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  const handleBringToFront = useCallback((id) => {
+    const fc = fabricRef.current;
+    if (!fc) return;
+    const objs = fc.getObjects();
+    const obj = objs.find((o) => o._id === id);
+    if (!obj) return;
+    fc.bringObjectToFront(obj);
+    fc.renderAll();
+    refreshLayers();
+    scheduleSaveCanvas();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  const handleSendToBack = useCallback((id) => {
+    const fc = fabricRef.current;
+    if (!fc) return;
+    const objs = fc.getObjects();
+    const obj = objs.find((o) => o._id === id);
+    if (!obj) return;
+    fc.sendObjectToBack(obj);
+    fc.renderAll();
+    refreshLayers();
+    scheduleSaveCanvas();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
 
   const handleDeleteLayer = useCallback((id) => {
     const fc = fabricRef.current;
@@ -270,7 +473,8 @@ export default function DesignEditor({ design, onPatch }) {
     fc.renderAll();
     refreshLayers();
     scheduleSaveCanvas();
-  }, [refreshLayers, scheduleSaveCanvas]);
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
 
   const handleToggleLock = useCallback((id) => {
     const fc = fabricRef.current;
@@ -285,7 +489,8 @@ export default function DesignEditor({ design, onPatch }) {
     fc.renderAll();
     refreshLayers();
     scheduleSaveCanvas();
-  }, [refreshLayers, scheduleSaveCanvas]);
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
 
   const handleSelectLayer = useCallback((id) => {
     const fc = fabricRef.current;
@@ -306,8 +511,35 @@ export default function DesignEditor({ design, onPatch }) {
     fc.renderAll();
     refreshLayers();
     scheduleSaveCanvas();
+    setTimeout(() => pushHistory(), 50);
     setSelectedObj((prev) => (prev && prev._id === id ? { ...prev, ...props } : prev));
-  }, [refreshLayers, scheduleSaveCanvas]);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  // Shrink a Textbox's wrap width to tightly fit its widest line of current text.
+  const handleAutoWidth = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!active || (active.type !== 'textbox' && active.type !== 'i-text' && active.type !== 'text')) return;
+    try {
+      const lineCount = (active._textLines && active._textLines.length) || 1;
+      let widest = 0;
+      for (let i = 0; i < lineCount; i++) {
+        if (typeof active.getLineWidth === 'function') {
+          const lw = active.getLineWidth(i);
+          if (lw > widest) widest = lw;
+        }
+      }
+      if (widest > 0) {
+        active.set('width', Math.ceil(widest));
+        active.initDimensions();
+        active.setCoords();
+        fc.renderAll();
+        refreshLayers();
+        scheduleSaveCanvas();
+        setTimeout(() => pushHistory(), 50);
+      }
+    } catch {}
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
 
   const handleGenerate = useCallback(async (prompt, negative) => {
     const fc = fabricRef.current;
@@ -359,11 +591,10 @@ export default function DesignEditor({ design, onPatch }) {
     const fc = fabricRef.current;
     if (!fc) return;
     const next = Math.min(fc.getZoom() * 1.2, 5);
-    // Canva-style: scale the frame itself so the white page grows/shrinks
-    fc.setZoom(next);
+    const center = fc.getCenterPoint();
+    fc.zoomToPoint(center, next);
     fc.setWidth(dims.w * next);
     fc.setHeight(dims.h * next);
-    fc.setViewportTransform([next, 0, 0, next, 0, 0]);
     fc.requestRenderAll();
     setZoom(next);
   }, [dims]);
@@ -372,10 +603,10 @@ export default function DesignEditor({ design, onPatch }) {
     const fc = fabricRef.current;
     if (!fc) return;
     const next = Math.max(fc.getZoom() / 1.2, 0.05);
-    fc.setZoom(next);
+    const center = fc.getCenterPoint();
+    fc.zoomToPoint(center, next);
     fc.setWidth(dims.w * next);
     fc.setHeight(dims.h * next);
-    fc.setViewportTransform([next, 0, 0, next, 0, 0]);
     fc.requestRenderAll();
     setZoom(next);
   }, [dims]);
@@ -453,9 +684,13 @@ export default function DesignEditor({ design, onPatch }) {
         if (cancelled || fabricRef.current !== fc) return;
         fc.clear();
         fc.backgroundColor = '#ffffff';
-        for (const obj of objects) fc.add(obj);
+        for (let i = 0; i < objects.length; i++) {
+          fc.add(objects[i]);
+          if (i % 20 === 0) await new Promise((r) => setTimeout(r, 0));
+        }
         fc.renderAll();
         refreshLayers();
+        setTimeout(() => pushHistory(), 60);
       } catch (err) {
         console.error('Layer import failed', err);
         window.alert('Could not convert that page into editable layers.');
@@ -482,16 +717,74 @@ export default function DesignEditor({ design, onPatch }) {
   const handleExportPng = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    const dataUrl = fc.toDataURL({ format: 'png', multiplier: 2, quality: 1 });
-    downloadFile(dataUrl, 'design.png');
-  }, [downloadFile]);
+    const prevBg = fc.backgroundColor;
+    try {
+      if (transparentBg) fc.backgroundColor = null;
+      const dataUrl = fc.toDataURL({ format: 'png', multiplier: 2, quality: 1 });
+      downloadFile(dataUrl, 'design.png');
+    } catch (err) {
+      console.error('PNG export failed', err);
+      window.alert('Export failed — canvas too large for this device. Try “Fit” then export, or remove some high-res images.');
+      try {
+        const fallback = fc.toDataURL({ format: 'png', multiplier: 1, quality: 1 });
+        downloadFile(fallback, 'design.png');
+      } catch {}
+    } finally {
+      if (transparentBg) {
+        fc.backgroundColor = prevBg;
+        fc.requestRenderAll();
+      }
+    }
+  }, [downloadFile, transparentBg]);
 
   const handleExportSvg = useCallback(() => {
     const fc = fabricRef.current;
     if (!fc) return;
-    const svg = fc.toSVG();
-    downloadFile(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, 'design.svg');
+    try {
+      const svg = fc.toSVG();
+      downloadFile(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, 'design.svg');
+    } catch (err) {
+      console.error('SVG export failed', err);
+      window.alert('SVG export failed: ' + (err.message || 'unknown error'));
+    }
   }, [downloadFile]);
+
+  const handleExportJpg = useCallback(() => {
+    const fc = fabricRef.current;
+    if (!fc) return;
+    try {
+      // JPG has no alpha — composite on white first, then jpeg-encode.
+      const dataUrl = fc.toDataURL({ format: 'jpeg', multiplier: 2, quality: 0.92 });
+      downloadFile(dataUrl, 'design.jpg');
+    } catch (err) {
+      console.error('JPG export failed', err);
+      window.alert('Export failed — try “Fit” then export, or remove some high-res images.');
+    }
+  }, [downloadFile]);
+
+  const handleExportPdf = useCallback(async () => {
+    const fc = fabricRef.current;
+    if (!fc) return;
+    try {
+      const multiplier = 2;
+      const dataUrl = fc.toDataURL({ format: 'png', multiplier, quality: 1 });
+      const pngBytes = await fetch(dataUrl).then((r) => r.arrayBuffer());
+      const doc = await PDFDocument.create();
+      // PDF points (72/in) from canvas pixels (96/in): page is drawn at the
+      // canvas's size and the PNG embedded 1:1 in point space.
+      const page = doc.addPage([dims.w, dims.h]);
+      const png = await doc.embedPng(pngBytes);
+      page.drawImage(png, { x: 0, y: 0, width: dims.w, height: dims.h });
+      const bytes = await doc.save();
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      downloadFile(url, 'design.pdf');
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('PDF export failed', err);
+      window.alert('PDF export failed: ' + (err.message || 'unknown error'));
+    }
+  }, [downloadFile, dims]);
 
   const handleClear = useCallback(() => {
     const fc = fabricRef.current;
@@ -502,7 +795,243 @@ export default function DesignEditor({ design, onPatch }) {
     fc.renderAll();
     refreshLayers();
     scheduleSaveCanvas();
-  }, [refreshLayers, scheduleSaveCanvas]);
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  // Convert a text block's lines into a bullet / numbered list, or back to plain.
+  // Markers are written into the text itself (fabric Textbox has no native list),
+  // so the result is plain text with "• " or "1. " prefixes per line.
+  const listMarker = (listType, i) => listType === 'bullets' ? '• ' : `${i + 1}. `;
+  const handleSetList = useCallback((type) => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!active || (active.type !== 'textbox' && active.type !== 'i-text' && active.type !== 'text')) return;
+    const raw = String(active.text || '');
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return;
+    let next;
+    if (type === 'none') {
+      next = lines.map((l) => l.replace(/^(\d+\.|•|\-)\s+/, '')).join('\n');
+    } else {
+      next = lines.map((l, i) => {
+        const clean = l.replace(/^(\d+\.|•|\-)\s+/, '');
+        return listMarker(type, i) + clean;
+      }).join('\n');
+    }
+    active.set({ text: next, _list: type === 'none' ? null : type });
+    active.initDimensions();
+    active.setCoords();
+    fc.renderAll();
+    refreshLayers();
+    scheduleSaveCanvas();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, scheduleSaveCanvas, pushHistory]);
+
+  const handleCopy = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!active || active.isEditing) return;
+    active.clone().then((c) => { clipboardRef.current = c; });
+  }, []);
+
+  const handlePaste = useCallback(() => {
+    const fc = fabricRef.current;
+    const clip = clipboardRef.current;
+    if (!fc || !clip) return;
+    clip.clone().then((clone) => {
+      clone.set({ left: (clone.left || 0) + 20, top: (clone.top || 0) + 20, _id: genId(), name: `${clone.name || clone.type} copy` });
+      fc.add(clone);
+      fc.setActiveObject(clone);
+      fc.renderAll();
+      refreshLayers();
+      setTimeout(() => pushHistory(), 50);
+    });
+  }, [genId, refreshLayers, pushHistory]);
+
+  const handleNudge = useCallback((dx, dy) => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!active || active.isEditing) return;
+    active.set('left', (active.left || 0) + dx);
+    active.set('top', (active.top || 0) + dy);
+    active.setCoords();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, pushHistory]);
+
+  const handleAlign = useCallback((dir) => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active) return;
+    const objs = active.type === 'activeSelection' ? active.getObjects() : [active];
+    const cw = dims.w;
+    const ch = dims.h;
+    objs.forEach((obj) => {
+      const w = obj.width * (obj.scaleX || 1);
+      const h = obj.height * (obj.scaleY || 1);
+      if (dir === 'left') obj.set('left', 0);
+      else if (dir === 'centerH') obj.set('left', (cw - w) / 2);
+      else if (dir === 'right') obj.set('left', cw - w);
+      else if (dir === 'top') obj.set('top', 0);
+      else if (dir === 'centerV') obj.set('top', (ch - h) / 2);
+      else if (dir === 'bottom') obj.set('top', ch - h);
+      obj.setCoords();
+    });
+    if (active.type === 'activeSelection') active.setCoords();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [dims, refreshLayers, pushHistory]);
+
+  const handleDistribute = useCallback((dir) => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.type !== 'activeSelection' || active.getObjects().length < 3) return;
+    const objs = [...active.getObjects()].sort((a, b) => (dir === 'horizontal' ? a.left - b.left : a.top - b.top));
+    if (dir === 'horizontal') {
+      const minX = Math.min(...objs.map((o) => o.left));
+      const maxR = Math.max(...objs.map((o) => o.left + o.width * (o.scaleX || 1)));
+      const totalW = objs.reduce((s, o) => s + o.width * (o.scaleX || 1), 0);
+      const gap = (maxR - minX - totalW) / (objs.length - 1);
+      let cur = minX;
+      objs.forEach((obj) => {
+        obj.set('left', cur);
+        cur += obj.width * (obj.scaleX || 1) + gap;
+        obj.setCoords();
+      });
+    } else {
+      const minY = Math.min(...objs.map((o) => o.top));
+      const maxB = Math.max(...objs.map((o) => o.top + o.height * (o.scaleY || 1)));
+      const totalH = objs.reduce((s, o) => s + o.height * (o.scaleY || 1), 0);
+      const gap = (maxB - minY - totalH) / (objs.length - 1);
+      let cur = minY;
+      objs.forEach((obj) => {
+        obj.set('top', cur);
+        cur += obj.height * (obj.scaleY || 1) + gap;
+        obj.setCoords();
+      });
+    }
+    active.setCoords();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, pushHistory]);
+
+  const handleFlip = useCallback((axis) => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.isEditing) return;
+    const objs = active.type === 'activeSelection' ? active.getObjects() : [active];
+    objs.forEach((obj) => {
+      if (axis === 'h') obj.set('flipX', !obj.flipX);
+      else obj.set('flipY', !obj.flipY);
+      obj.setCoords();
+    });
+    if (active.type === 'activeSelection') active.setCoords();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, pushHistory]);
+
+  const handleImageFit = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.type !== 'image') return;
+    const maxW = dims.w * 0.8;
+    const maxH = dims.h * 0.8;
+    const scale = Math.min(maxW / active.width, maxH / active.height);
+    active.set({ scaleX: scale, scaleY: scale });
+    fc.centerObject(active);
+    active.setCoords();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [dims, refreshLayers, pushHistory]);
+
+  const handleImageFill = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.type !== 'image') return;
+    const scale = Math.max(dims.w / active.width, dims.h / active.height);
+    active.set({ scaleX: scale, scaleY: scale });
+    fc.centerObject(active);
+    active.setCoords();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [dims, refreshLayers, pushHistory]);
+
+  const handleReplaceImage = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.type !== 'image') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      try {
+        const newImg = await fabric.FabricImage.fromURL(dataUrl);
+        newImg.set({
+          left: active.left,
+          top: active.top,
+          scaleX: active.scaleX,
+          scaleY: active.scaleY,
+          angle: active.angle,
+          flipX: active.flipX,
+          flipY: active.flipY,
+          _id: active._id,
+          name: file.name || active.name,
+          _role: active._role,
+        });
+        fc.remove(active);
+        fc.add(newImg);
+        fc.setActiveObject(newImg);
+        fc.requestRenderAll();
+        refreshLayers();
+        setTimeout(() => pushHistory(), 50);
+      } catch {}
+    };
+    input.click();
+  }, [refreshLayers, pushHistory]);
+
+  const handleGroup = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.type !== 'activeSelection' || active.getObjects().length < 2) return;
+    const objects = active.getObjects();
+    const all = fc.getObjects();
+    const minIdx = Math.min(...objects.map((o) => all.indexOf(o)).filter((i) => i >= 0));
+    fc.discardActiveObject();
+    objects.forEach((o) => fc.remove(o));
+    const group = new fabric.Group(objects, { _id: genId(), name: 'Group' });
+    // Preserve original z-order — insert at lowest index, not top
+    if (minIdx >= 0 && minIdx < fc.getObjects().length) fc.insertAt(group, minIdx);
+    else fc.add(group);
+    fc.setActiveObject(group);
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [genId, refreshLayers, pushHistory]);
+
+  const handleUngroup = useCallback(() => {
+    const fc = fabricRef.current;
+    const active = fc?.getActiveObject();
+    if (!fc || !active || active.type !== 'group') return;
+    // toActiveSelection handles coordinate conversion correctly
+    active.toActiveSelection();
+    fc.requestRenderAll();
+    refreshLayers();
+    setTimeout(() => pushHistory(), 50);
+  }, [refreshLayers, pushHistory]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -515,24 +1044,85 @@ export default function DesignEditor({ design, onPatch }) {
         handleDeleteLayer(selectedObj._id);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-      } else if (e.key.toLowerCase() === 't') {
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        handleCopy();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        handlePaste();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        const active = fc.getActiveObject();
+        if (active?._id) handleDuplicateLayer(active._id);
+        else if (active) {
+          active.clone().then((clone) => {
+            clone.set({ left: (active.left || 0) + 20, top: (active.top || 0) + 20, _id: genId(), name: `${active.name || active.type} copy` });
+            fc.add(clone);
+            fc.setActiveObject(clone);
+            fc.renderAll();
+            refreshLayers();
+            setTimeout(() => pushHistory(), 50);
+          });
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) handleUngroup();
+        else handleGroup();
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        if (e.key === 'ArrowUp') handleNudge(0, -step);
+        else if (e.key === 'ArrowDown') handleNudge(0, step);
+        else if (e.key === 'ArrowLeft') handleNudge(-step, 0);
+        else if (e.key === 'ArrowRight') handleNudge(step, 0);
+      } else if (!fc.getActiveObject()?.isEditing && e.key.toLowerCase() === 't') {
         e.preventDefault();
         addText();
-      } else if (e.key.toLowerCase() === 'r') {
+      } else if (!fc.getActiveObject()?.isEditing && e.key.toLowerCase() === 'r') {
         e.preventDefault();
         addRect();
-      } else if (e.key.toLowerCase() === 'c') {
+      } else if (!fc.getActiveObject()?.isEditing && e.key.toLowerCase() === 'c') {
         e.preventDefault();
         addCircle();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedObj, handleDeleteLayer, addText, addRect, addCircle]);
+  }, [selectedObj, handleDeleteLayer, addText, addRect, addCircle, handleUndo, handleRedo, handleCopy, handlePaste, handleNudge, handleDuplicateLayer, handleGroup, handleUngroup, genId, refreshLayers, pushHistory]);
 
   const handleSizeChange = useCallback((size) => {
     setCanvasSize(size);
   }, []);
+
+  const handleSidebarResizeStart = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev) => {
+      const dx = startX - ev.clientX;
+      const next = Math.min(480, Math.max(200, startW + dx));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    localStorage.setItem('design:sbWidth', String(sidebarWidth));
+  }, [sidebarWidth]);
 
   // Canva-style pages: save current canvas before switching, load target page
   const saveCurrentPageSilently = useCallback(() => {
@@ -574,9 +1164,10 @@ export default function DesignEditor({ design, onPatch }) {
         fc2.backgroundColor = '#ffffff';
         fc2.renderAll();
         refreshLayers();
+        setTimeout(() => pushHistory(), 60);
       }
     }, 50);
-  }, [activePageIdx, design?.id, onPatch, refreshLayers]);
+  }, [activePageIdx, design?.id, onPatch, refreshLayers, pushHistory]);
 
   const handleSwitchPage = useCallback(async (idx) => {
     if (idx === activePageIdx) return;
@@ -605,10 +1196,11 @@ export default function DesignEditor({ design, onPatch }) {
     }
     fc.renderAll();
     refreshLayers();
+    setTimeout(() => pushHistory(), 60);
     if (onPatch && design?.id && pages.length > 1) {
       onPatch(design.id, { canvasJson: { pages, activeIdx: idx } });
     }
-  }, [activePageIdx, pages, design?.id, onPatch, refreshLayers]);
+  }, [activePageIdx, pages, design?.id, onPatch, refreshLayers, pushHistory]);
 
   const handleDuplicatePage = useCallback((idx) => {
     const fc = fabricRef.current;
@@ -630,7 +1222,8 @@ export default function DesignEditor({ design, onPatch }) {
         return [...prev.slice(0, idx + 1), dup, ...prev.slice(idx + 1)];
       });
     }
-  }, [activePageIdx]);
+    setTimeout(() => pushHistory(), 80);
+  }, [activePageIdx, pushHistory]);
 
   const handleDeletePage = useCallback((idx) => {
     if (pages.length <= 1) {
@@ -641,6 +1234,7 @@ export default function DesignEditor({ design, onPatch }) {
         fc.backgroundColor = '#ffffff';
         fc.renderAll();
         refreshLayers();
+        setTimeout(() => pushHistory(), 60);
       }
       return;
     }
@@ -650,7 +1244,8 @@ export default function DesignEditor({ design, onPatch }) {
     } else if (activePageIdx >= pages.length - 1) {
       setActivePageIdx(pages.length - 2);
     }
-  }, [pages.length, activePageIdx, refreshLayers]);
+    setTimeout(() => pushHistory(), 80);
+  }, [pages.length, activePageIdx, refreshLayers, pushHistory]);
 
   function handleCommand(text) {
     const fc = fabricRef.current;
@@ -725,14 +1320,29 @@ export default function DesignEditor({ design, onPatch }) {
         onImportLayers={handleOpenImport}
         canImportLayers={!importing && !extracting}
         onDelete={() => selectedObj && handleDeleteLayer(selectedObj._id)}
-        onUndo={() => {}}
-        onRedo={() => {}}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onAlign={handleAlign}
+        onGroup={handleGroup}
+        onUngroup={handleUngroup}
+        onDistribute={handleDistribute}
+        onFlip={handleFlip}
+        transparentBg={transparentBg}
+        onToggleTransparent={() => setTransparentBg((v) => !v)}
         onExportPng={handleExportPng}
         onExportSvg={handleExportSvg}
+        onExportJpg={handleExportJpg}
+        onExportPdf={handleExportPdf}
         onClear={handleClear}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomFit={handleZoomFit}
+        snapEnabled={snapEnabled}
+        onToggleSnap={() => setSnapEnabled((v) => !v)}
+        showGrid={showGrid}
+        onToggleGrid={() => setShowGrid((v) => !v)}
         isSocialTemplate={isSocialTemplate}
         onSetSocialTemplate={design?.id ? handleSetSocialTemplate : null}
       />
@@ -793,6 +1403,9 @@ export default function DesignEditor({ design, onPatch }) {
             onObjectSelected={handleObjectSelected}
             onLayersChanged={handleLayersChanged}
             onZoomChange={setZoom}
+            snapEnabled={snapEnabled}
+            showGrid={showGrid}
+            zoom={zoom}
           />
           <div className="design-zoom-controls">
             <button type="button" className="design-zoom-btn" onClick={handleZoomIn} title="Zoom in">
@@ -807,16 +1420,17 @@ export default function DesignEditor({ design, onPatch }) {
             </button>
           </div>
         </div>
-        <div className="design-sidebar">
+        <div className="design-sidebar-resizer" onMouseDown={handleSidebarResizeStart} />
+        <div className="design-sidebar" style={{ width: sidebarWidth }}>
           <div className="design-sidebar-tabs">
             <button className={`design-sidebar-tab ${activePanel === 'layers' ? 'active' : ''}`} onClick={() => setActivePanel('layers')}>Layers</button>
             <button className={`design-sidebar-tab ${activePanel === 'ai' ? 'active' : ''}`} onClick={() => setActivePanel('ai')}>AI</button>
             <button className={`design-sidebar-tab ${activePanel === 'properties' ? 'active' : ''}`} onClick={() => setActivePanel('properties')}>Props</button>
           </div>
           <div className="design-sidebar-content">
-            {activePanel === 'layers' && <LayerPanel layers={layers} onReorder={handleReorder} onSelect={handleSelectLayer} selectedId={selectedObj?._id} onDelete={handleDeleteLayer} onDuplicate={handleDuplicateLayer} onToggleVisible={handleToggleVisible} onToggleLock={handleToggleLock} />}
+            {activePanel === 'layers' && <LayerPanel layers={layers} onReorder={handleReorder} onSelect={handleSelectLayer} selectedId={selectedObj?._id} onDelete={handleDeleteLayer} onDuplicate={handleDuplicateLayer} onToggleVisible={handleToggleVisible} onToggleLock={handleToggleLock} onBringForward={handleBringForward} onSendBackward={handleSendBackward} onBringToFront={handleBringToFront} onSendToBack={handleSendToBack} />}
             {activePanel === 'ai' && <AIGeneratePanel onGenerate={handleGenerate} generating={generating} />}
-            {activePanel === 'properties' && <ObjectPanel selectedObj={selectedObj} onUpdate={handleUpdateObject} />}
+            {activePanel === 'properties' && <ObjectPanel selectedObj={selectedObj} onUpdate={handleUpdateObject} onReplaceImage={handleReplaceImage} onImageFit={handleImageFit} onImageFill={handleImageFill} onAutoWidth={handleAutoWidth} onSetList={handleSetList} />}
           </div>
         </div>
       </div>
@@ -945,7 +1559,7 @@ export default function DesignEditor({ design, onPatch }) {
   );
 }
 
-function ObjectPanel({ selectedObj, onUpdate }) {
+function ObjectPanel({ selectedObj, onUpdate, onReplaceImage, onImageFit, onImageFill, onAutoWidth, onSetList }) {
   if (!selectedObj) {
     return <div className="object-panel"><p className="object-panel-empty">Select an object to edit its properties.</p></div>;
   }
@@ -965,6 +1579,14 @@ function ObjectPanel({ selectedObj, onUpdate }) {
               <span className="op-field-label">Text</span>
               <textarea className="op-input" value={selectedObj.text || ''} onChange={(e) => update('text', e.target.value)} rows={3} />
             </div>
+            <div className="op-field" style={{ marginTop: 8 }}>
+              <span className="op-field-label">List</span>
+              <select className="op-input" value={selectedObj._list || 'none'} onChange={(e) => onSetList(e.target.value)}>
+                <option value="none">None</option>
+                <option value="bullets">Bullets</option>
+                <option value="numbers">Numbered</option>
+              </select>
+            </div>
           </div>
           <div className="op-section">
             <div className="op-field">
@@ -972,11 +1594,109 @@ function ObjectPanel({ selectedObj, onUpdate }) {
               <input className="op-input" type="number" value={selectedObj.fontSize || 48} onChange={(e) => update('fontSize', Number(e.target.value))} />
             </div>
           </div>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Font family</span>
+              <select
+                className="op-input"
+                value={parseFontFamily(selectedObj.fontFamily)}
+                onChange={async (e) => {
+                  const f = e.target.value;
+                  ensureGoogleFontLoaded(f);
+                  try { await document.fonts.ready; } catch {}
+                  update('fontFamily', f);
+                }}
+              >
+                {CURATED_GOOGLE_FONTS.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Text align</span>
+              <select
+                className="op-input"
+                value={selectedObj.textAlign || 'left'}
+                onChange={(e) => update('textAlign', e.target.value)}
+              >
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+                <option value="justify">Justify</option>
+              </select>
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Text width</span>
+              <input className="op-input" type="number" value={Math.round(selectedObj.width ?? 0)} onChange={(e) => update('width', Math.max(1, Number(e.target.value) || 0))} title="Wrap width for the text block" />
+            </div>
+            <div className="op-row" style={{ marginTop: 6 }}>
+              <button type="button" className="op-toggle-btn" onClick={onAutoWidth} title="Shrink the box's wrap width to tightly fit the current text">Fit width to text</button>
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-row">
+              <div className="op-field">
+                <span className="op-field-label">Line height</span>
+                <input className="op-input op-input-sm" type="number" step="0.1" min="0.5" max="3" value={selectedObj.lineHeight ?? 1.16} onChange={(e) => update('lineHeight', parseFloat(e.target.value) || 1.16)} />
+              </div>
+              <div className="op-field">
+                <span className="op-field-label">Spacing</span>
+                <input className="op-input op-input-sm" type="number" step="10" min="-200" max="1000" value={selectedObj.charSpacing ?? 0} onChange={(e) => update('charSpacing', parseInt(e.target.value, 10) || 0)} />
+              </div>
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-row">
+              <button type="button" className={`op-toggle-btn ${selectedObj.fontWeight === '700' || selectedObj.fontWeight === 'bold' ? 'active' : ''}`} onClick={() => update('fontWeight', selectedObj.fontWeight === '700' ? '400' : '700')} title="Bold">B</button>
+              <button type="button" className={`op-toggle-btn ${selectedObj.fontStyle === 'italic' ? 'active' : ''}`} onClick={() => update('fontStyle', selectedObj.fontStyle === 'italic' ? 'normal' : 'italic')} title="Italic">I</button>
+              <button type="button" className={`op-toggle-btn ${selectedObj.underline ? 'active' : ''}`} onClick={() => update('underline', !selectedObj.underline)} title="Underline">U</button>
+            </div>
+          </div>
         </>
       )}
 
-      <div className="op-section">
-        <div className="op-field-label">Social template role</div>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Text outline</span>
+              <div className="op-row">
+                <div className="op-field">
+                  <input className="op-color" type="color" value={rgbToHex(selectedObj.stroke || '#000000')} onChange={(e) => update('stroke', e.target.value)} title="Outline color" />
+                </div>
+                <div className="op-field">
+                  <input className="op-input op-input-sm" type="number" min="0" max="20" value={selectedObj.strokeWidth ?? 0} onChange={(e) => update('strokeWidth', Number(e.target.value) || 0)} title="Outline width" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-field">
+              <span className="op-field-label">Shadow</span>
+              <select
+                className="op-input"
+                value={selectedObj.shadow ? (selectedObj.shadow.offsetX ?? 0) + '' : 'none'}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === 'none') update('shadow', null);
+                  else update('shadow', { color: 'rgba(0,0,0,0.35)', blur: Number(v), offsetX: Number(v) === 0 ? 0 : Number(v), offsetY: Number(v) === 0 ? 0 : Number(v) });
+                }}
+              >
+                <option value="none">None</option>
+                <option value="0">0 (soft edge)</option>
+                <option value="2">2</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="16">16</option>
+              </select>
+            </div>
+          </div>
+          <div className="op-section">
+            <div className="op-field-label">Social template role</div>
         <div className="op-row">
           <button
             type="button"
@@ -999,9 +1719,47 @@ function ObjectPanel({ selectedObj, onUpdate }) {
       <div className="op-section">
         <div className="op-field">
           <span className="op-field-label">Fill</span>
-          <input className="op-color" type="color" value={selectedObj.fill || '#000000'} onChange={(e) => update('fill', e.target.value)} />
+          <input className="op-color" type="color" value={rgbToHex(selectedObj.fill || '#000000')} onChange={(e) => update('fill', e.target.value)} />
         </div>
       </div>
+
+      <div className="op-section">
+        <div className="op-field">
+          <span className="op-field-label">Opacity {Math.round((selectedObj.opacity ?? 1) * 100)}%</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round((selectedObj.opacity ?? 1) * 100)}
+            onChange={(e) => update('opacity', Number(e.target.value) / 100)}
+          />
+        </div>
+      </div>
+
+      {(selectedObj.type === 'rect' || selectedObj.type === 'circle' || selectedObj.type === 'path') && (
+        <div className="op-section">
+          <div className="op-row">
+            <div className="op-field">
+              <span className="op-field-label">Stroke</span>
+              <input className="op-color" type="color" value={rgbToHex(selectedObj.stroke || '#000000')} onChange={(e) => update('stroke', e.target.value || null)} />
+            </div>
+            <div className="op-field">
+              <span className="op-field-label">Width</span>
+              <input className="op-input op-input-sm" type="number" min="0" max="40" value={selectedObj.strokeWidth ?? 0} onChange={(e) => update('strokeWidth', Number(e.target.value) || 0)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedObj.type === 'image' && (
+        <div className="op-section">
+          <div className="op-row">
+            <button type="button" className="op-btn" onClick={onReplaceImage}>Replace</button>
+            <button type="button" className="op-btn" onClick={onImageFit}>Fit</button>
+            <button type="button" className="op-btn" onClick={onImageFill}>Fill</button>
+          </div>
+        </div>
+      )}
 
       <div className="op-section">
         <div className="op-row">
@@ -1016,18 +1774,20 @@ function ObjectPanel({ selectedObj, onUpdate }) {
         </div>
       </div>
 
-      <div className="op-section">
-        <div className="op-row">
-          <div className="op-field">
-            <span className="op-field-label">Width</span>
-            <input className="op-input op-input-sm" type="number" value={Math.round(selectedObj.width ?? 0)} onChange={(e) => update('width', Number(e.target.value))} />
-          </div>
-          <div className="op-field">
-            <span className="op-field-label">Height</span>
-            <input className="op-input op-input-sm" type="number" value={Math.round(selectedObj.height ?? 0)} onChange={(e) => update('height', Number(e.target.value))} />
+      {!(selectedObj.type === 'textbox' || selectedObj.type === 'i-text' || selectedObj.type === 'text') && (
+        <div className="op-section">
+          <div className="op-row">
+            <div className="op-field">
+              <span className="op-field-label">Width</span>
+              <input className="op-input op-input-sm" type="number" value={Math.round(selectedObj.width ?? 0)} onChange={(e) => update('width', Number(e.target.value))} />
+            </div>
+            <div className="op-field">
+              <span className="op-field-label">Height</span>
+              <input className="op-input op-input-sm" type="number" value={Math.round(selectedObj.height ?? 0)} onChange={(e) => update('height', Number(e.target.value))} />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="op-section">
         <div className="op-field">

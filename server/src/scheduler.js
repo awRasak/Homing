@@ -1,5 +1,6 @@
 import { db, nowIso, newId } from './db.js';
 import { scanTopic } from './services/socialListening.js';
+import { sendEmail } from './email.js';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
@@ -302,4 +303,47 @@ export function startSocialAssetsPruner() {
   console.log('[Prune] Social assets pruner — daily, 30d TTL + 500-row cap');
   pruneSocialAssets(); // run once on boot to catch any backlog
   setInterval(pruneSocialAssets, 24 * 60 * 60 * 1000);
+}
+
+// ── Reminder delivery (runs every minute, independent of any open tab) ──
+let reminderRunning = false;
+
+async function reminderTick() {
+  if (reminderRunning) return;
+  reminderRunning = true;
+  try {
+    const due = db.prepare(
+      "SELECT * FROM becca_reminders WHERE fired = 0 AND dismissed = 0 AND due IS NOT NULL AND due <= ?"
+    ).all(nowIso());
+
+    for (const r of due) {
+      try {
+        const owner = db.prepare('SELECT email FROM users WHERE workspace = ?').get(r.workspace);
+        if (!owner?.email) {
+          console.warn(`[Reminders] no owner email for workspace "${r.workspace}", skipping reminder ${r.id}`);
+          continue;
+        }
+        await sendEmail({
+          to: owner.email,
+          subject: `Reminder: ${r.text}`,
+          html: `<p style="font-size:16px;">${String(r.text).replace(/</g, '&lt;')}</p>
+                 <p style="color:#999;font-size:12px;">Sent by Homin — you asked to be reminded${r.when_raw ? ` "${String(r.when_raw).replace(/</g, '&lt;')}"` : ''}.</p>`,
+        });
+        console.log(`[Reminders] emailed ${owner.email} for reminder ${r.id}`);
+        db.prepare('UPDATE becca_reminders SET fired = 1 WHERE id = ?').run(r.id);
+      } catch (err) {
+        // Leave fired=0 so a transient failure (e.g. email not yet configured)
+        // retries on the next tick instead of silently dropping the reminder.
+        console.error(`[Reminders] failed to deliver reminder ${r.id}:`, err.message);
+      }
+    }
+  } finally {
+    reminderRunning = false;
+  }
+}
+
+export function startReminderScheduler() {
+  console.log('[Reminders] Started — checking every 60 seconds');
+  setInterval(reminderTick, 60_000);
+  setTimeout(reminderTick, 5_000);
 }

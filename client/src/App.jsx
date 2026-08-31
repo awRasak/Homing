@@ -8,6 +8,7 @@ import RebrandPanel from './components/RebrandPanel';
 import NavRail from './components/NavRail';
 import BrandKit from './components/BrandKit';
 import ComingSoon from './components/ComingSoon';
+import IosInstallBanner from './components/IosInstallBanner';
 import EditDesignDrawer from './components/EditDesignDrawer';
 import Dashboard from './components/Dashboard';
 import RecipientsList from './components/RecipientsList';
@@ -90,7 +91,7 @@ const COMING_SOON_COPY = {
 
 export default function App() {
   const [section, setSection] = useState('becca');
-  const [theme, setTheme] = useState(() => (localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'));
+  const [theme, setTheme] = useState(() => (localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'));
   const [designs, setDesigns] = useState([]);
   const [designsLoaded, setDesignsLoaded] = useState(false);
   const [activeDesignId, setActiveDesignId] = useState(null);
@@ -118,7 +119,7 @@ export default function App() {
   const [beccaMemory, setBeccaMemory] = useState([]);
   const [beccaReminders, setBeccaReminders] = useState([]);
   const [beccaBriefings, setBeccaBriefings] = useState([]);
-  const [beccaSettings, setBeccaSettings] = useState({ dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00' });
+  const [beccaSettings, setBeccaSettings] = useState({ dailyOn: false, dailyTime: '07:00', quietFrom: '22:00', quietTo: '07:00', notificationsEnabled: false });
   const [beccaSettingsOpen, setBeccaSettingsOpen] = useState(false);
   const [beccaModel, setBeccaModel] = useState(() => localStorage.getItem('homin:model') || 'gpt-oss-120b');
   const [showCompanySetup, setShowCompanySetup] = useState(false);
@@ -136,6 +137,7 @@ export default function App() {
   const [authHint, setAuthHint] = useState('');
   const [resetToken] = useState(() => new URLSearchParams(window.location.search).get('reset_token') || '');
   const [resetPassword, setResetPassword] = useState('');
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
 
   const bootstrapped = useRef(false);
   const importSourceRef = useRef('manual'); // 'onboarding' = seed the brand kit, 'manual' = leave it alone
@@ -153,8 +155,14 @@ export default function App() {
         document.documentElement.removeAttribute('data-theme');
       }
       localStorage.setItem(THEME_KEY, next);
+      syncThemeColor(next);
       return next;
     });
+  }
+
+  function syncThemeColor(mode) {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', mode === 'dark' ? '#141614' : '#f0f2f0');
   }
 
   useEffect(() => {
@@ -184,6 +192,18 @@ export default function App() {
       setAuthLoading(false);
       await loadWorkspaceData();
     })();
+  }, []);
+
+  // Offline awareness — the SW serves the shell; this banner explains the gaps.
+  useEffect(() => {
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
   }, []);
 
   // Loads providers, designs, and Becca data — safe to call again after the
@@ -820,12 +840,35 @@ export default function App() {
   // chime, then mark it fired server-side so it never rings twice.
   const [firedReminder, setFiredReminder] = useState(null);
   const firedRef = useRef(new Set());
+  // A fresh AudioContext starts 'suspended' until a user gesture resumes it —
+  // creating one per chime (the old approach) meant every single reminder
+  // hit that same block. Priming one shared context on the very first
+  // click/keypress of the session keeps it unlocked for every chime after.
+  const audioCtxRef = useRef(null);
+
+  useEffect(() => {
+    function primeAudio() {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!audioCtxRef.current) {
+        try { audioCtxRef.current = new Ctx(); } catch { return; }
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+    }
+    const events = ['pointerdown', 'keydown'];
+    events.forEach((e) => document.addEventListener(e, primeAudio, { once: true }));
+    return () => events.forEach((e) => document.removeEventListener(e, primeAudio));
+  }, []);
 
   function playChime() {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
-      const ctx = new Ctx();
+      if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       [0, 0.28].forEach((offset, i) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -838,8 +881,23 @@ export default function App() {
         osc.start(ctx.currentTime + offset);
         osc.stop(ctx.currentTime + offset + 0.55);
       });
-      setTimeout(() => ctx.close(), 1600);
     } catch { /* audio blocked — modal still shows */ }
+  }
+
+  // System notification alongside the in-app modal — fires even when this
+  // tab isn't focused, unlike the chime/modal which only make sense while
+  // looking at the page. No-ops silently if unsupported or not granted.
+  function notifyReminder(r) {
+    if (!beccaSettings.notificationsEnabled) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      const n = new Notification('Homin reminder', {
+        body: r.text,
+        icon: '/icons/logomark.png',
+        tag: `reminder-${r.id}`,
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch { /* notification blocked — chime + modal still cover it */ }
   }
 
   useEffect(() => {
@@ -856,6 +914,7 @@ export default function App() {
           firedRef.current.add(r.id);
           setFiredReminder(r);
           playChime();
+          notifyReminder(r);
           api.becca.updateReminder(r.id, { fired: 1 }).catch(() => {});
           setBeccaReminders(prev => prev.map(x => x.id === r.id ? { ...x, fired: 1 } : x));
           break;
@@ -863,7 +922,7 @@ export default function App() {
       }
     }, 3000);
     return () => clearInterval(iv);
-  }, [authUser, beccaReminders]);
+  }, [authUser, beccaReminders, beccaSettings.notificationsEnabled]);
 
   async function handleAuthSubmit(e) {
     e.preventDefault();
@@ -1122,6 +1181,11 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {isOffline && (
+        <div className="offline-banner" role="status">
+          You're offline — showing cached content. Reconnect to load the latest.
+        </div>
+      )}
       <NavRail section={section} onNavigate={setSection}
         onOpenProfile={() => { setSection('becca'); setBeccaSettingsOpen(true); }}
         onLogout={handleLogout} />
@@ -1390,6 +1454,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <IosInstallBanner />
 
       {firedReminder && (
         <div className="reminder-modal-overlay" onClick={() => setFiredReminder(null)}>
